@@ -2,244 +2,79 @@
 
 ## 概要
 
-M2DXは**8オペレーターFMシンセサイザー**として設計された、MIDI 2.0準拠のiOS AUv3 Audio Unit Extensionです。DX7互換のFM合成エンジンを持ち、MIDI2KitとProperty Exchangeを活用した次世代のパラメータ制御を実現しています。
+M2DXは**Pure Swift 6.1+**で実装された、MIDI 2.0準拠のiOS DX7互換FMシンセサイザーです。6オペレーター・32アルゴリズムのFM合成エンジンを持ち、AVAudioSourceNodeによる最小レイテンシ再生と、MIDI2Kit + Property Exchangeによる次世代パラメータ制御を実現しています。
 
-### システム構成
+### 技術スタック
+
+- **言語**: Swift 6.1+ (strict concurrency mode)
+- **フレームワーク**: SwiftUI, AVFoundation, CoreMIDI
+- **プラットフォーム**: iOS 18.0+, macOS 14.0+
+- **アーキテクチャパターン**: MV (Model-View) パターン、SwiftUI標準状態管理
+- **並行性**: Swift Concurrency (async/await, @MainActor, Actor, NSLock)
+- **オーディオAPI**: AVAudioSourceNode (CoreAudio直接レンダー)
+- **MIDI**: MIDI2Kit (MIDI 2.0 UMP, MIDI-CI Property Exchange)
+
+---
+
+## システム構成
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ M2DX (iOS App Shell)                                    │
-│   - M2DXApp.swift (エントリポイント)                    │
-│   - SwiftUI Root View                                   │
-└─────────────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│ M2DXAudioUnit (AUv3 Extension)                          │
-│                                                         │
-│  ┌───────────────────────────────────────────────┐      │
-│  │ Swift Layer                                   │      │
-│  │  - M2DXAudioUnit.swift                        │      │
-│  │  - M2DXAudioUnitViewController.swift          │      │
-│  │  - AUParameterTree (200+ parameters)          │      │
-│  └───────────────────────────────────────────────┘      │
-│                         │                               │
-│                         ▼                               │
-│  ┌───────────────────────────────────────────────┐      │
-│  │ Objective-C++ Bridge                          │      │
-│  │  - M2DXKernelBridge.h / .mm                   │      │
-│  └───────────────────────────────────────────────┘      │
-│                         │                               │
-│                         ▼                               │
-│  ┌───────────────────────────────────────────────┐      │
-│  │ C++ DSP Engine                                │      │
-│  │  - M2DXKernel.hpp (ポリフォニー管理)          │      │
-│  │  - Voice (8オペレーター)                      │      │
-│  │  - FMOperator.hpp (FM合成+EG)                 │      │
-│  │  - Envelope (DX7スタイル4-rate/4-level)       │      │
-│  └───────────────────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│ M2DXPackage (Swift Package)                             │
-│  - M2DXCore: パラメータモデル、PropertyExchange定義     │
-│  - M2DXFeature: SwiftUI UI (8-op view, TX816 view)     │
-└─────────────────────────────────────────────────────────┘
+M2DX (iOS/macOS App Shell)
+  └── M2DXPackage (Swift Package)
+       ├── M2DXCore (Data Models)
+       │   ├── OperatorParameters, EnvelopeParameters, KeyboardLevelScaling
+       │   ├── DX7Preset, DX7OperatorPreset, PresetCategory
+       │   ├── DX7Algorithms (アルゴリズム定義)
+       │   ├── DX7FactoryPresets
+       │   └── PropertyExchange/
+       │       ├── M2DXParameterAddressMap
+       │       ├── M2DXParameterTree
+       │       ├── M2DXPEBridge
+       │       └── M2DXPEResource
+       └── M2DXFeature (UI + Engine)
+           ├── M2DXRootView (SwiftUI main UI)
+           ├── FMSynthEngine (Pure Swift FM synth)
+           ├── M2DXAudioEngine (AVAudioSourceNode wrapper)
+           ├── MIDIInputManager (MIDI 2.0 via MIDI2Kit)
+           ├── MIDIEventQueue (Lock-free MIDI buffer)
+           └── UI Views (Algorithm, Envelope, Keyboard, Preset, Settings)
 ```
 
 ---
 
-## 1. AUv3 Audio Unit Extension
+## 1. データモデル層 (M2DXCore)
 
-### 1.1 M2DXAudioUnit.swift
+### 1.1 プリセットモデル
 
-**役割**: AUv3 Generatorの実装。AudioToolboxフレームワーク上で動作し、DAWやホストアプリに読み込まれる。
+#### DX7Preset
+DX7互換のプリセット全体を表現するモデル。
 
-**主要機能**:
-- **AUAudioUnitサブクラス**: Audio Unitのライフサイクル管理
-- **AUParameterTree**: 200以上のパラメータを階層構造で公開
-  - Global parameters (algorithm, master volume, feedback)
-  - 8 operator parameters (level, ratio, detune, feedback, EG rates/levels)
-- **internalRenderBlock**: リアルタイムオーディオ処理ブロック
-- **MIDI処理**: AURenderEvent経由でNote On/Off、Control Change受信
+**主要プロパティ**:
+- `name: String` - プリセット名 (最大10文字)
+- `operators: [DX7OperatorPreset]` - 6個のオペレータ設定
+- `algorithm: Int` - アルゴリズム番号 (1-32)
+- `feedback: Int` - フィードバックレベル (0-7)
+- `category: PresetCategory` - カテゴリ分類
 
-**パラメータアドレス設計**:
-```swift
-// グローバル
-0: Algorithm
-1: MasterVolume
-2: Feedback
+#### DX7OperatorPreset
+単一オペレータの設定。
 
-// オペレーター (100単位でセクション分割)
-100 + opIndex*100 + 0:  Level
-100 + opIndex*100 + 1:  Ratio
-100 + opIndex*100 + 2:  Detune
-100 + opIndex*100 + 3:  Feedback
-100 + opIndex*100 + 10-13: EG Rates (R1-R4)
-100 + opIndex*100 + 20-23: EG Levels (L1-L4)
+**主要プロパティ**:
+- `outputLevel: Int` - 出力レベル (0-99)
+- `frequencyCoarse: Int` - 周波数粗調整 (0-31)
+- `frequencyFine: Int` - 周波数微調整 (0-99)
+- `detune: Int` - デチューン (-7〜+7)
+- `envelope: EnvelopeParameters` - ADSR+エンベロープ
+- `keyboardLevelScaling: KeyboardLevelScaling` - KLS設定
 
-例: OP3のLevel = address 300
-例: OP8のEG Rate2 = address 811
-```
+#### EnvelopeParameters
+DX7スタイル4-Rate/4-Levelエンベロープ。
 
-**MIDI処理フロー**:
-1. `internalRenderBlock`内で`AURenderEvent`を受信
-2. `handleMIDIEventStatic`でMIDIメッセージを解析
-   - 0x90: Note On → `kernel.handleNoteOn(note, velocity)`
-   - 0x80: Note Off → `kernel.handleNoteOff(note)`
-   - 0xB0: Control Change → CC#7 (Volume)等を処理
-3. C++カーネルにディスパッチ
+**プロパティ**:
+- `rates: [Int]` - 4つのレート (0-99)
+- `levels: [Int]` - 4つのレベル (0-99)
 
-### 1.2 M2DXAudioUnitViewController.swift
-
-**役割**: AUv3のUI。SwiftUIビューをUIViewControllerにホスティング。
-
-**機能**:
-- SwiftUIベースのエディタUI統合
-- ホストアプリ（GarageBand、Logic Pro等）内で表示される
-- M2DXFeature (SwiftUI UI)をホストする薄いラッパー
-
----
-
-## 2. Objective-C++ ブリッジ
-
-### 2.1 M2DXKernelBridge.h / .mm
-
-**役割**: Swift (AUv3) と C++ DSPエンジン間の言語ブリッジ。
-
-**実装詳細**:
-- `std::unique_ptr<M2DX::M2DXKernel>` をObjective-Cクラス内に保持
-- Swiftから呼び出し可能なObjective-Cメソッドを提供
-- C++カーネルへのメソッド転送
-
-**公開API**:
-```objc
-- (instancetype)initWithSampleRate:(double)sampleRate;
-- (void)setSampleRate:(double)sampleRate;
-- (void)setAlgorithm:(int)algorithm;
-- (void)setMasterVolume:(float)volume;
-
-// オペレーター設定
-- (void)setOperatorLevel:(int)opIndex level:(float)level;
-- (void)setOperatorRatio:(int)opIndex ratio:(float)ratio;
-- (void)setOperatorDetune:(int)opIndex detuneCents:(float)cents;
-- (void)setOperatorFeedback:(int)opIndex feedback:(float)feedback;
-- (void)setOperatorEnvelopeRates:(int)opIndex r1:(float)r1 r2:(float)r2 r3:(float)r3 r4:(float)r4;
-- (void)setOperatorEnvelopeLevels:(int)opIndex l1:(float)l1 l2:(float)l2 l3:(float)l3 l4:(float)l4;
-
-// MIDI処理
-- (void)handleNoteOn:(uint8_t)note velocity:(uint8_t)velocity;
-- (void)handleNoteOff:(uint8_t)note;
-- (void)allNotesOff;
-
-// オーディオ処理
-- (void)processBufferLeft:(float *)outL right:(float *)outR frameCount:(int)frameCount;
-- (int)activeVoiceCount;
-```
-
-**初期化時のデフォルトサウンド**:
-- OP1-4: Level=1.0, Ratio=1-4
-- OP5-8: Level=0.5, Ratio=5-8
-- OP6のみ Feedback=0.3 (DX7のフィードバック・オペレーター相当)
-- すべてのオペレーターに基本的なEG設定 (R1=99, R2=75, R3/R4=50)
-
----
-
-## 3. C++ DSPエンジン
-
-### 3.1 M2DXKernel.hpp
-
-**役割**: メインDSPカーネル。16ボイスポリフォニー管理、アルゴリズム切り替え、MIDIハンドリング。
-
-**定数**:
-```cpp
-constexpr int kNumOperators = 8;   // 8オペレーター (DX7=6を拡張)
-constexpr int kNumVoices = 16;     // 16音ポリフォニー
-constexpr int kNumAlgorithms = 64; // 64アルゴリズム (1-32: DX7互換, 33-64: 8-op拡張)
-```
-
-**クラス構造**:
-
-#### MIDINote
-```cpp
-struct MIDINote {
-    uint8_t note;
-    uint8_t velocity;
-    bool active;
-};
-```
-
-#### Voice
-- **8個のFMOperator**を保持
-- **アルゴリズム処理**: 64種類のアルゴリズムに対応
-  - Algorithm 1 (index 0): OP6→5→4→3→2→1 (シリアルチェーン)
-  - Algorithm 2 (index 1): (OP6→5→4→3→2) + OP1 (2キャリア)
-  - Algorithm 5 (index 4): 3ペア並列
-  - Algorithm 32 (index 31): 全6オペレーター並列
-  - Algorithm 33 (index 32): 全8オペレーター・シリアル (8-op拡張)
-  - Algorithm 64 (index 63): 全8オペレーター並列 (8-op拡張)
-
-**アルゴリズム処理例**:
-```cpp
-// Algorithm 1: OP6→5→4→3→2→1 (DX7 Algorithm 1)
-float processAlgorithm1() {
-    float mod = operators_[5].process(); // OP6 (modulator)
-    mod = operators_[4].process(mod);    // OP5
-    mod = operators_[3].process(mod);    // OP4
-    mod = operators_[2].process(mod);    // OP3
-    mod = operators_[1].process(mod);    // OP2
-    return operators_[0].process(mod);   // OP1 (carrier)
-}
-
-// Algorithm 33: 8オペレーター・フルシリアル (M2DX拡張)
-float processAlgorithm33() {
-    float mod = operators_[7].process(); // OP8
-    mod = operators_[6].process(mod);    // OP7
-    mod = operators_[5].process(mod);    // OP6
-    mod = operators_[4].process(mod);    // OP5
-    mod = operators_[3].process(mod);    // OP4
-    mod = operators_[2].process(mod);    // OP3
-    mod = operators_[1].process(mod);    // OP2
-    return operators_[0].process(mod);   // OP1 (carrier)
-}
-```
-
-#### M2DXKernel
-- **16個のVoice**を管理
-- **ボイス・スティーリング**: 空きボイスがない場合、最古のボイスを再利用
-- **正規化**: アクティブボイス数の平方根で除算し、クリッピング防止
-- **パラメータ一括設定**: すべてのボイスに対してパラメータを同期的に適用
-
-**処理フロー**:
-```cpp
-float processSample() {
-    float output = 0.0f;
-    int activeVoices = 0;
-
-    for (auto& voice : voices_) {
-        if (voice.isActive()) {
-            output += voice.process();
-            ++activeVoices;
-        }
-    }
-
-    // ボイス数に応じた正規化 (クリッピング防止)
-    if (activeVoices > 0) {
-        output /= std::sqrt(static_cast<float>(activeVoices));
-    }
-
-    return output * masterVolume_;
-}
-```
-
-### 3.2 FMOperator.hpp
-
-**役割**: 単一のFMオペレーター。正弦波オシレーター + DX7スタイル・エンベロープジェネレーター。
-
-#### Envelope クラス
-
-**DX7互換 4-Rate / 4-Level エンベロープ**:
+**ステージ遷移**:
 ```
 Level
   L1 ┐
@@ -254,171 +89,759 @@ Level
      R1 R2 R3 (Hold)     R4
 ```
 
-**ステージ遷移**:
-1. **Idle**: 初期状態
-2. **Attack** (R1): 0 → L1
-3. **Decay1** (R2): L1 → L2
-4. **Decay2** (R3): L2 → L3
-5. **Sustain**: L3でホールド
-6. **Release** (R4): L3 → L4 (通常0)
+### 1.2 アルゴリズム定義
 
-**レート→係数変換** (DX7互換):
-```cpp
-void recalculateCoefficients() {
-    for (int i = 0; i < 4; ++i) {
-        float rate = rates_[i]; // 0-99
-        float timeInSeconds = 10.0f * std::exp(-0.069f * rate);
-        coefficients_[i] = 1.0f - std::exp(-1.0f / (timeInSeconds * sampleRate_));
-    }
+#### DX7Algorithms
+32個のDX7互換アルゴリズムを静的に定義。
+
+**代表例**:
+- Algorithm 1: OP6→5→4→3→2→1 (フルシリアルチェーン)
+- Algorithm 5: 3ペア並列 (OP6→5, OP4→3, OP2→1)
+- Algorithm 32: 全6オペレータ並列
+
+### 1.3 Property Exchange
+
+MIDI 2.0 Property Exchange準拠のパラメータツリー定義。
+
+**主要クラス**:
+- `M2DXParameterAddressMap` - パラメータアドレス定義
+- `M2DXParameterTree` - 階層構造ツリー
+- `M2DXPEBridge` - MIDI-CI PE Responder実装
+- `M2DXPEResource` - JSONリソース定義
+
+---
+
+## 2. DSPエンジン層 (FMSynthEngine)
+
+### 2.1 FMSynthEngine
+
+Pure Swift実装のFM合成エンジン (約536行)。
+
+**主要機能**:
+- 6オペレータFM合成 (DX7互換)
+- 32アルゴリズム (静的ルーティングテーブル)
+- 16音ポリフォニー
+- サスティンペダル (CC64)対応
+- ピッチベンド (±2半音)対応
+- ソフトクリッピング (Pade近似tanh)
+
+#### 定数定義
+
+```swift
+private let kNumOperators = 6          // DX7互換
+private let kNumVoices = 16            // 16音ポリフォニー
+private let kSampleRate: Float = 48000.0
+private let kVoiceNormalizationScale: Float = 3.0  // ヘッドルーム確保
+```
+
+#### アルゴリズムルーティングテーブル
+
+**OpRoute構造体**:
+```swift
+struct OpRoute {
+    let src0: Int?   // 第1変調ソース (オペレータindex)
+    let src1: Int?   // 第2変調ソース
+    let src2: Int?   // 第3変調ソース
+    let isCarrier: Bool  // キャリア判定
 }
 ```
+
+**AlgorithmRoute構造体**:
+```swift
+struct AlgorithmRoute {
+    let ops: (OpRoute, OpRoute, OpRoute, OpRoute, OpRoute, OpRoute)
+    let normalizationFactor: Float
+}
+```
+
+**例: Algorithm 1 (フルシリアル)**:
+```swift
+AlgorithmRoute(
+    ops: (
+        OpRoute(src0: 1, src1: nil, src2: nil, isCarrier: true),  // OP1 (carrier)
+        OpRoute(src0: 2, src1: nil, src2: nil, isCarrier: false), // OP2
+        OpRoute(src0: 3, src1: nil, src2: nil, isCarrier: false), // OP3
+        OpRoute(src0: 4, src1: nil, src2: nil, isCarrier: false), // OP4
+        OpRoute(src0: 5, src1: nil, src2: nil, isCarrier: false), // OP5
+        OpRoute(src0: nil, src1: nil, src2: nil, isCarrier: false) // OP6 (mod)
+    ),
+    normalizationFactor: 0.707
+)
+```
+
+#### FMOp (オペレータ)
+
+**プロパティ**:
+```swift
+struct FMOp {
+    var phase: Float = 0.0           // 位相アキュムレータ (0.0-1.0)
+    var phaseInc: Float = 0.0        // 位相増分 (frequency/sampleRate)
+    var feedback1: Float = 0.0       // 1サイクル遅延バッファ
+    var level: Float = 0.0           // 出力レベル (0.0-1.0)
+    var baseFrequency: Float = 0.0   // ベース周波数 (ピッチベンド用)
+    var envelope = Envelope()        // エンベロープジェネレータ
+}
+```
+
+**主要メソッド**:
+- `mutating func process(mod0: Float, mod1: Float, mod2: Float, fb: Float) -> Float`
+  - 3ソース変調 + 自己フィードバック対応
+  - サイン波生成: `sin((phase + mod0 + mod1 + mod2 + fb*feedback1) * 2π)`
+  - エンベロープ適用: `output *= envelope.process() * level`
+
+- `mutating func applyPitchBend(_ factor: Float)`
+  - 周波数を動的に再計算: `phaseInc = baseFrequency * factor / sampleRate`
+
+#### Envelope (エンベロープジェネレータ)
+
+**ステージ定義**:
+```swift
+enum EnvStage {
+    case idle, attack, decay1, decay2, sustain, release
+}
+```
+
+**レート→係数変換** (DX7互換):
+```swift
+func calcCoeff(_ rate: Float) -> Float {
+    let timeInSeconds = 10.0 * exp(-0.069 * rate)
+    return 1.0 - exp(-1.0 / (timeInSeconds * kSampleRate))
+}
+```
+
 - Rate 99 (最速): 約0.01秒
 - Rate 0 (最遅): 約10秒
 
-**エンベロープ処理** (1次ローパスフィルタ近似):
-```cpp
-currentLevel_ += coefficient * (targetLevel - currentLevel_);
+**エンベロープ処理** (1次ローパス近似):
+```swift
+level += coeff * (target - level)
 ```
 
-#### FMOperator クラス
+#### Voice (ボイス)
 
-**パラメータ**:
-- `frequency_`: 基本周波数 (Hz)
-- `ratio_`: 周波数比 (例: 1.0, 2.0, 3.5)
-- `detune_`: デチューン (セント → 乗数変換)
-- `level_`: 出力レベル (0.0-1.0)
-- `feedback_`: 自己フィードバック (0.0-1.0)
-
-**FM合成処理**:
-```cpp
-float process(float modulation = 0.0f) {
-    float envelopeLevel = envelope_.process();
-
-    // 自己フィードバック
-    float feedbackMod = feedback_ * previousOutput_;
-
-    // 位相計算 (外部変調 + フィードバック)
-    float effectivePhase = phase_ + modulation + feedbackMod;
-
-    // サイン波生成
-    float output = std::sin(effectivePhase * 2.0f * M_PI);
-
-    // エンベロープ + レベル適用
-    output *= envelopeLevel * level_;
-
-    // 位相更新
-    phase_ += phaseIncrement_;
-    if (phase_ >= 1.0f) phase_ -= 1.0f;
-
-    previousOutput_ = output;
-    return output;
+**プロパティ**:
+```swift
+struct Voice {
+    var note: UInt8 = 0
+    var velocity16: UInt16 = 0
+    var active = false
+    var sustained = false              // サスティンペダル状態
+    var pitchBendFactor: Float = 1.0   // ピッチベンド係数
+    var ops = (FMOp(), FMOp(), FMOp(), FMOp(), FMOp(), FMOp())  // 6オペレータ
 }
 ```
 
-**周波数計算**:
-```cpp
-void noteOn(float baseFrequency) {
-    frequency_ = baseFrequency * ratio_ * detune_;
-    phaseIncrement_ = frequency_ / sampleRate_;
-    envelope_.noteOn();
-    phase_ = 0.0f;
+**主要メソッド**:
+- `mutating func process() -> Float`
+  - アルゴリズムルーティングテーブルからオペレータ接続情報を取得
+  - 6オペレータを順次処理
+  - 正規化係数を適用
+
+- `mutating func noteOn(note: UInt8, velocity16: UInt16, algorithm: Int, ...)`
+  - 全オペレータのエンベロープをトリガー
+  - 周波数計算: `baseFreq = 440.0 * pow(2.0, (note - 69) / 12.0)`
+
+#### FMSynthEngine本体
+
+**スレッドセーフ**:
+```swift
+private let lock = NSLock()  // render()とパラメータ変更メソッドで共有
+```
+
+**主要メソッド**:
+- `func render(buffer: UnsafeMutablePointer<Float>, count: Int)`
+  - MIDIEventQueueから全イベントをdrain
+  - 全ボイスを処理: `output += voice.process()`
+  - 動的正規化: `output /= sqrt(activeCount) * kVoiceNormalizationScale`
+  - ソフトクリッピング: `output = tanhApprox(output) * masterVolume`
+
+- ボイススティーリング:
+  ```swift
+  private func allocateVoice() -> Int {
+      // 1. 非アクティブボイスを検索
+      // 2. なければsustained=falseかつ最小エンベロープレベルのボイス
+      // 3. なければ最古のボイス
+  }
+  ```
+
+### 2.2 ソフトクリッピング
+
+Pade近似による高速tanh:
+```swift
+private func tanhApprox(_ x: Float) -> Float {
+    let x2 = x * x
+    return x * (27.0 + x2) / (27.0 + 9.0 * x2)
+}
+```
+
+- 入力範囲: -∞〜+∞
+- 出力範囲: -1.0〜+1.0
+- 飽和特性により自然なオーバードライブ感
+
+---
+
+## 3. オーディオエンジン層 (M2DXAudioEngine)
+
+### 3.1 M2DXAudioEngine
+
+**役割**: AVAudioEngineとFMSynthEngineの統合管理。
+
+**アクター隔離**: `@Observable @MainActor`
+
+**主要プロパティ**:
+```swift
+@Observable @MainActor
+class M2DXAudioEngine {
+    private let engine = AVAudioEngine()
+    private let synthEngine = FMSynthEngine()
+    private let eventQueue = MIDIEventQueue()
+    private var sourceNode: AVAudioSourceNode?
+
+    var isRunning = false
+    var selectedOutputDevice: String? = nil
+}
+```
+
+**初期化**:
+```swift
+init() {
+    setupAudioSession()  // 48kHz, 5ms IOBufferDuration
+    setupSourceNode()    // AVAudioSourceNode作成
+    setupOutputDeviceObserver()
+}
+```
+
+**AVAudioSourceNode生成** (nonisolated static):
+```swift
+nonisolated static func makeSourceNode(
+    synthEngine: FMSynthEngine,
+    eventQueue: MIDIEventQueue
+) -> AVAudioSourceNode {
+    let format = AVAudioFormat(
+        standardFormatWithSampleRate: 48000,
+        channels: 2
+    )!
+
+    return AVAudioSourceNode(format: format) { (isSilence, timeStamp, frameCount, outputData) -> OSStatus in
+        let buffer = outputData.pointee.mBuffers
+        let left = buffer.mData!.assumingMemoryBound(to: Float.self)
+        let right = left.advanced(by: Int(frameCount))
+
+        synthEngine.render(buffer: left, count: Int(frameCount))
+        // Stereo copy
+        for i in 0..<Int(frameCount) {
+            right[i] = left[i]
+        }
+
+        isSilence.pointee = false
+        return noErr
+    }
+}
+```
+
+**オーディオセッション設定**:
+```swift
+func setupAudioSession() {
+    let session = AVAudioSession.sharedInstance()
+    try? session.setCategory(.playback, mode: .default)
+    try? session.setPreferredSampleRate(48000.0)
+    try? session.setPreferredIOBufferDuration(0.005)  // 5ms = 最小レイテンシ
+    try? session.setActive(true)
+}
+```
+
+**MIDI処理メソッド**:
+```swift
+func noteOn(note: UInt8, velocity16: UInt16) {
+    eventQueue.enqueue(.noteOn, data1: note, data2: UInt32(velocity16))
+}
+
+func noteOff(note: UInt8) {
+    eventQueue.enqueue(.noteOff, data1: note, data2: 0)
+}
+
+func controlChange(cc: UInt8, value32: UInt32) {
+    eventQueue.enqueue(.controlChange, data1: cc, data2: value32)
+}
+
+func pitchBend(value32: UInt32) {
+    eventQueue.enqueue(.pitchBend, data1: 0, data2: value32)
+}
+```
+
+**プリセット読み込み**:
+```swift
+func loadPreset(_ preset: DX7Preset) {
+    synthEngine.setAlgorithm(preset.algorithm)
+    for (i, op) in preset.operators.enumerated() {
+        synthEngine.setOpLevel(i, Float(op.outputLevel) / 99.0)
+        synthEngine.setOpRatio(i, op.frequencyRatio)
+        // ... エンベロープ等
+    }
 }
 ```
 
 ---
 
-## 4. SwiftUI UI (M2DXPackage)
+## 4. MIDI入力層 (MIDIInputManager)
 
-### 4.1 M2DXCore
+### 4.1 MIDIInputManager
 
-**PropertyExchange パラメータ定義**:
-- `M2DXParameterTree.swift`: 200以上のパラメータを階層構造で定義
-- MIDI 2.0 Property Exchange準拠
-- JSON形式でエクスポート可能
+**役割**: CoreMIDI経由のMIDI 2.0 UMP受信、デコード、コールバック配信。
 
-### 4.2 M2DXFeature
+**アクター隔離**: `@Observable @MainAactor`
 
-**SwiftUI Views**:
-- `M2DXRootView`: モード切り替え (M2DX 8-op / TX816)
-- `M2DX8OpView`: 8オペレーター 2×4グリッド表示
-- `TX816View`: 8モジュール・マルチティンバー表示
-- `OperatorGridView`: オペレーター詳細パネル
+**依存関係**: MIDI2Kit (../../MIDI2Kit)
+
+**主要プロパティ**:
+```swift
+@Observable @MainActor
+class MIDIInputManager {
+    private var transport: CoreMIDITransport?
+    var onNoteOn: ((UInt8, UInt16) -> Void)?        // (note, velocity16)
+    var onNoteOff: ((UInt8) -> Void)?
+    var onControlChange: ((UInt8, UInt32) -> Void)?  // (cc, value32)
+    var onPitchBend: ((UInt32) -> Void)?             // (value32)
+
+    var connectedSources: [String] = []
+    var debugMessages: [String] = []
+}
+```
+
+**初期化** (MIDI 2.0プロトコル):
+```swift
+init() {
+    transport = CoreMIDITransport(
+        mode: .device,
+        protocol: ._2_0  // MIDI 2.0 UMP
+    )
+    transport?.connect()
+    connectToAllSources()
+}
+```
+
+**MIDI 2.0 UMP デコード**:
+```swift
+private func handleReceivedData(_ data: MIDIReceivedData) {
+    // MIDI 2.0 Channel Voice (type 0x4)
+    if data.umpWord1 != 0 {
+        handleUMPData(data.umpWord1, data.umpWord2)
+        return
+    }
+
+    // MIDI 1.0フォールバック (type 0x2)
+    handleMIDI1Data(data.bytes)
+}
+```
+
+**handleUMPData** (MIDI 2.0 フルプレシジョン):
+```swift
+private func handleUMPData(_ word1: UInt32, _ word2: UInt32) {
+    let mt = (word1 >> 28) & 0xF
+    guard mt == 0x4 else { return }  // Channel Voice type
+
+    let status = (word1 >> 16) & 0xFF
+    let channel = (word1 >> 16) & 0x0F
+    let data1 = UInt8((word1 >> 8) & 0xFF)
+
+    switch status & 0xF0 {
+    case 0x90:  // Note On
+        let velocity16 = UInt16(word2 >> 16)  // 16-bit velocity
+        onNoteOn?(data1, velocity16)
+
+    case 0x80:  // Note Off
+        onNoteOff?(data1)
+
+    case 0xB0:  // Control Change
+        let value32 = word2  // 32-bit CC value
+        onControlChange?(data1, value32)
+
+    case 0xE0:  // Pitch Bend
+        let value32 = word2  // 32-bit pitch bend
+        onPitchBend?(value32)
+
+    default:
+        break
+    }
+}
+```
+
+**handleMIDI1Data** (MIDI 1.0 → フルプレシジョンへアップスケール):
+```swift
+private func handleMIDI1Data(_ bytes: [UInt8]) {
+    guard bytes.count >= 2 else { return }
+    let status = bytes[0] & 0xF0
+    let data1 = bytes[1]
+
+    switch status {
+    case 0x90:
+        let velocity7 = bytes[2]
+        let velocity16 = UInt16(velocity7) << 9  // 7→16bit変換
+        onNoteOn?(data1, velocity16)
+
+    case 0xB0:
+        let value7 = bytes[2]
+        let value32 = UInt32(value7) << 25  // 7→32bit変換
+        onControlChange?(data1, value32)
+
+    case 0xE0:
+        let lsb = bytes[2]
+        let msb = bytes[3]
+        let value14 = UInt32(lsb) | (UInt32(msb) << 7)
+        let value32 = value14 << 18  // 14→32bit変換
+        onPitchBend?(value32)
+
+    default:
+        break
+    }
+}
+```
+
+### 4.2 MIDI-CI Property Exchange
+
+**M2DXPEBridge**:
+- MIDI-CI PE Responder実装
+- パラメータツリーJSON配信
+- Get/Set Property Exchange対応
+
+**対応プロパティ**:
+- `X-M2DX-ParameterTree` - 全パラメータ階層構造
+- `X-M2DX-CurrentPreset` - 現在のプリセット状態
 
 ---
 
-## 5. ビルドとデプロイ
+## 5. MIDIイベントキュー (MIDIEventQueue)
 
-### 5.1 プロジェクト構造
+### 5.1 設計
+
+**ロックフリー実装** (OSAllocatedUnfairLock):
+```swift
+final class MIDIEventQueue {
+    private let lock = OSAllocatedUnfairLock()
+    private var buffer: [MIDIEvent] = []
+    private let capacity = 256
+}
+```
+
+**イベント定義**:
+```swift
+struct MIDIEvent {
+    enum Kind {
+        case noteOn, noteOff, controlChange, pitchBend
+    }
+    let kind: Kind
+    let data1: UInt8   // note, cc number
+    let data2: UInt32  // velocity16, cc32, pitchBend32
+}
+```
+
+**主要メソッド**:
+```swift
+func enqueue(_ kind: Kind, data1: UInt8, data2: UInt32) {
+    lock.withLock {
+        guard buffer.count < capacity else { return }  // silent overflow drop
+        buffer.append(MIDIEvent(kind: kind, data1: data1, data2: data2))
+    }
+}
+
+func drain() -> [MIDIEvent] {
+    lock.withLock {
+        let events = buffer
+        buffer.removeAll(keepingCapacity: true)
+        return events
+    }
+}
+```
+
+---
+
+## 6. データフロー
+
+### 6.1 MIDI入力パス
+
+```
+External MIDI Controller (MIDI 2.0 UMP)
+  → CoreMIDI
+  → CoreMIDITransport (MIDI2Kit, ._2_0 protocol)
+  → handleEventList (type 0x4 Channel Voice)
+  → MIDIInputManager.handleUMPData()
+  → callbacks (onNoteOn/Off/CC/PitchBend)
+  → M2DXAudioEngine.noteOn/Off/controlChange/pitchBend()
+  → MIDIEventQueue.enqueue()
+```
+
+### 6.2 オーディオレンダーパス
+
+```
+AVAudioSourceNode render callback (CoreAudio thread)
+  → MIDIEventQueue.drain()  // lock.withLock
+  → FMSynthEngine.render()  // NSLock
+  → Voice.process() × 16
+  → FMOp.process() × 6
+  → Envelope.process()
+  → 動的正規化 (sqrt(activeCount) * kVoiceNormalizationScale)
+  → ソフトクリッピング (tanhApprox)
+  → masterVolume適用
+  → CoreAudio output buffer
+```
+
+### 6.3 タッチキーボードパス
+
+```
+SwiftUI TouchKeyboardView (onTap)
+  → M2DXAudioEngine.noteOn(note, UInt16(velocity) << 9)
+  → MIDIEventQueue.enqueue(.noteOn, ...)
+  → (同じrender path)
+```
+
+---
+
+## 7. 並行性モデル
+
+### 7.1 アクター隔離
+
+| クラス | 隔離 | 理由 |
+|-------|------|------|
+| M2DXAudioEngine | @MainActor | UI状態更新、AVAudioEngine操作 |
+| MIDIInputManager | @MainActor | コールバック配信、UI表示更新 |
+| FMSynthEngine | NSLock | オーディオスレッド・UIスレッド共有 |
+| MIDIEventQueue | OSAllocatedUnfairLock | UI→Audio スレッド間通信 |
+| UI Views | @MainActor | SwiftUI標準 |
+
+### 7.2 スレッド構成
+
+```
+Main Thread (@MainActor)
+  - SwiftUI UI更新
+  - M2DXAudioEngine.noteOn/Off()
+  - MIDIInputManager.handleReceivedData()
+  - MIDIEventQueue.enqueue()  ← OSAllocatedUnfairLock
+
+CoreMIDI Callback Thread
+  - handleEventList()
+  - receivedContinuation.yield()  → Main Thread
+
+CoreAudio Render Thread (Realtime)
+  - AVAudioSourceNode renderBlock
+  - MIDIEventQueue.drain()  ← OSAllocatedUnfairLock
+  - FMSynthEngine.render()  ← NSLock
+  - Voice.process() × 16
+```
+
+### 7.3 ロック戦略
+
+**NSLock (FMSynthEngine)**:
+- `render()`: オーディオスレッドから呼び出し
+- パラメータ変更メソッド: UIスレッドから呼び出し
+- 保持時間: 数マイクロ秒 (パラメータコピーのみ)
+
+**OSAllocatedUnfairLock (MIDIEventQueue)**:
+- `enqueue()`: UIスレッド
+- `drain()`: オーディオスレッド
+- 保持時間: 数ナノ秒 (配列操作のみ)
+
+---
+
+## 8. 依存関係
+
+### 8.1 外部依存
+
+**MIDI2Kit** (local: ../../MIDI2Kit):
+- CoreMIDITransport: MIDI 2.0 UMP受信
+- Property Exchange: MIDI-CI PE Responder
+- AsyncStream: MIDIデータ配信
+
+**標準フレームワーク**:
+- AVFoundation: AVAudioEngine, AVAudioSourceNode
+- CoreMIDI: MIDIPacketList (MIDI2Kitが使用)
+- SwiftUI: UI全般
+
+### 8.2 内部依存
+
+```
+M2DXFeature (UI + Engine)
+  → M2DXCore (Data Models)
+
+M2DXAudioEngine
+  → FMSynthEngine
+  → MIDIEventQueue
+
+MIDIInputManager
+  → MIDI2Kit (CoreMIDITransport)
+  → M2DXPEBridge
+
+FMSynthEngine
+  ← (no external dependency, pure Swift)
+```
+
+---
+
+## 9. ビルド設定
+
+### 9.1 プロジェクト構造
 
 ```
 M2DX.xcworkspace/
 ├── M2DX.xcodeproj/           (App shell)
 ├── M2DXPackage/              (Swift Package)
+│   ├── Package.swift
 │   ├── Sources/
 │   │   ├── M2DXCore/
 │   │   └── M2DXFeature/
 │   └── Tests/
-├── M2DXAudioUnit/            (AUv3 Extension target)
-│   ├── DSP/                  (C++)
-│   ├── Bridge/               (Objective-C++)
-│   ├── Parameters/           (Swift)
-│   ├── M2DXAudioUnit.swift
-│   └── M2DXAudioUnitViewController.swift
-├── M2DX/                     (App target)
-└── Config/                   (XCConfig)
+│       └── M2DXCoreTests/
+└── Config/
+    ├── Debug.xcconfig
+    ├── Release.xcconfig
+    ├── Shared.xcconfig
+    └── M2DX.entitlements
 ```
 
-### 5.2 署名とEntitlements
+### 9.2 Swift設定
 
-- Development Team: 必須（Xcodeで設定）
-- Entitlements: `Config/M2DX.entitlements`
-  - Audio Unit Extension
-  - Inter-App Audio (本番時のみ)
+**Package.swift**:
+```swift
+// Swift 6.1+, strict concurrency
+swiftSettings: [
+    .enableExperimentalFeature("StrictConcurrency")
+]
+```
 
-### 5.3 デバッグとテスト
+**プラットフォーム**:
+- iOS 18.0+
+- macOS 14.0+
 
-**AUv3のテスト方法**:
-1. Xcodeから実機/シミュレータにインストール
-2. GarageBand / Logic Pro等のホストアプリを起動
-3. Audio Unit Extensions → M2DX を読み込み
-4. MIDI入力でサウンド確認
+### 9.3 Entitlements
 
----
-
-## 6. 技術的特徴と設計判断
-
-### 6.1 言語選択
-
-| レイヤー | 言語 | 理由 |
-|---------|------|------|
-| DSP | C++ | リアルタイム性能、ゼロオーバーヘッド抽象化 |
-| ブリッジ | Objective-C++ | SwiftとC++の相互運用 |
-| Audio Unit | Swift | AudioToolbox API、型安全性 |
-| UI | SwiftUI | 宣言的UI、iOS標準 |
-
-### 6.2 パフォーマンス最適化
-
-- **ボイスごとの独立処理**: キャッシュ効率
-- **整数演算の回避**: floatベースの処理
-- **不要な分岐削減**: switch文を使ったアルゴリズム選択
-- **正規化による安全性**: `sqrt(activeVoices)`でクリッピング防止
-
-### 6.3 拡張性
-
-- **8オペレーター対応**: DX7 (6-op) からの自然な拡張
-- **64アルゴリズム**: 将来的なアルゴリズム追加に対応
-- **Property Exchange**: 新規パラメータ追加が容易
+```xml
+<key>com.apple.security.app-sandbox</key>
+<false/>
+<key>com.apple.developer.audio.core-midi</key>
+<true/>
+```
 
 ---
 
-## 7. まとめ
+## 10. パフォーマンス最適化
 
-M2DXは以下の技術スタックで構成されています：
+### 10.1 最小レイテンシ
 
-- **C++ DSP**: FMOperator, Envelope, M2DXKernel
-- **Objective-C++ Bridge**: M2DXKernelBridge
-- **Swift AUv3**: M2DXAudioUnit, AUParameterTree
-- **SwiftUI**: M2DXFeature (8-op UI, TX816 UI)
-- **MIDI 2.0**: Property Exchange準拠のパラメータツリー
+**AVAudioSourceNode採用理由**:
+- CoreAudioレンダーコールバック直接利用
+- バッファキューイングオーバーヘッドゼロ
+- IOBufferDuration (5ms) がそのままレイテンシになる
 
-DX7互換のFM合成を保ちつつ、8オペレーターへの拡張とMIDI 2.0の高解像度制御を実現した、次世代のFMシンセサイザー・リファレンス実装です。
+**旧方式 (AVAudioPlayerNode)**:
+- バッファスケジューリング: 256フレーム × 2 = 約10.7ms
+- Task{}非同期ホップ: 数ms追加
+- 合計: 約15ms
+
+**新方式 (AVAudioSourceNode)**:
+- IOBufferDuration: 5ms
+- 直接yield: ≈0ms
+- 合計: 約5ms
+
+### 10.2 メモリ最適化
+
+**Tupleベースのオペレータ配列**:
+```swift
+var ops = (FMOp(), FMOp(), FMOp(), FMOp(), FMOp(), FMOp())
+```
+- スタック配列 (ヒープアロケーションなし)
+- キャッシュ効率良好
+
+**静的ルーティングテーブル**:
+```swift
+private let kAlgorithmTable: [AlgorithmRoute] = [ ... ]
+```
+- 実行時アルゴリズム切り替えなしでルーティング変更
+- 分岐予測最適化
+
+### 10.3 リアルタイム安全性
+
+**オーディオスレッドで禁止されている操作を回避**:
+- メモリアロケーション: なし (事前確保済み)
+- ロック: NSLock最小限使用 (数μs)
+- System Call: なし
+
+---
+
+## 11. 技術的特徴
+
+### 11.1 Pure Swift実装
+
+**利点**:
+- 型安全性: コンパイル時エラー検出
+- メモリ安全性: ARC、所有権管理
+- 並行性: Swift Concurrency統合
+- デバッグ容易性: LLDBフル対応
+
+**課題と対策**:
+- パフォーマンス: `-O` 最適化で C++ と同等
+- リアルタイム性: NSLock最小化、ロックフリーキュー
+
+### 11.2 MIDI 2.0対応
+
+**フルプレシジョン処理**:
+- 16-bit velocity (0-65535)
+- 32-bit CC (0-4294967295)
+- 32-bit pitch bend (center=0x80000000)
+
+**MIDI 1.0互換**:
+- 7/14-bit → 16/32-bitアップスケール
+- CoreMIDIが自動プロトコル変換
+
+### 11.3 DX7互換性
+
+**プリセット互換**:
+- 32アルゴリズム (DX7と同一)
+- 6オペレータ構成
+- 4-Rate/4-Level Envelope
+- SysExフォーマット互換 (予定)
+
+---
+
+## 12. 今後の拡張計画
+
+### 12.1 実装予定機能
+
+- **LFO**: Pitch, Amplitude, Filter Cutoff変調
+- **Velocity Sensitivity**: オペレータごとのベロシティカーブ
+- **Portamento**: グライド効果
+- **SysEx Import/Export**: DX7バンクファイル読み込み
+- **AU/AUv3対応**: DAW統合
+
+### 12.2 最適化予定
+
+- **SIMD化**: 複数オペレータ並列処理
+- **Accelerate Framework**: vDSP使用
+- **Metal DSP**: GPU FM合成 (実験的)
+
+---
+
+## 13. まとめ
+
+M2DXは以下の技術要素で構成されています:
+
+**言語・フレームワーク**:
+- Pure Swift 6.1+ (strict concurrency)
+- SwiftUI (MV pattern)
+- AVFoundation (AVAudioSourceNode)
+- MIDI2Kit (MIDI 2.0 UMP, PE)
+
+**DSP実装**:
+- FMSynthEngine: 6-op, 32-algorithm, 16-voice
+- DX7互換エンベロープ
+- ソフトクリッピング
+- 動的正規化
+
+**並行性**:
+- @MainActor: UI + マネージャー層
+- NSLock: FMSynthEngine (最小限)
+- OSAllocatedUnfairLock: MIDIEventQueue (ロックフリー)
+
+**最小レイテンシ**:
+- AVAudioSourceNode: CoreAudio直接レンダー
+- 約5ms (IOBufferDuration)
+
+DX7互換のFM合成を保ちつつ、Swift 6の型安全性・並行性とMIDI 2.0の高解像度制御を実現した、次世代Pure Swiftシンセサイザーのリファレンス実装です。

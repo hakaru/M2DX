@@ -416,3 +416,252 @@
 決定事項: MIDI 2.0 Channel Voice対応完了、実機確認済み
 次のTODO: コミット
 ---
+
+---
+2026-02-07 07:00
+作業項目: MIDI 2.0 フルプレシジョン対応 — 実装開始
+追加機能の説明:
+- MIDIEventQueue.data2: UInt8→UInt32 に拡張（16-bit velocity, 32-bit CC/PB対応）
+- MIDIReceivedData に umpWord1/umpWord2 フィールド追加（生UMPワード保存）
+- CoreMIDITransport: type 0x4 デコードで umpWord1/2 を保存
+- MIDIInputManager: コールバックシグネチャ変更（velocity UInt16, CC/PB UInt32）
+- M2DXAudioEngine: noteOn velocity16, controlChange value32, pitchBend UInt32
+- FMSynthEngine: 16-bit velocity → velScale, 32-bit PB/CC 処理
+- M2DXFeature: コールバック接続更新、タッチキーボード 7→16bit 変換
+決定事項: MIDI 1.0互換7-bitパスを廃止し16/32-bitパスに統一（CoreMIDIが自動変換）
+次のTODO: Step 1〜7 順次実装
+---
+
+---
+2026-02-07 06:50
+作業項目: ドキュメントライター起動（ユーザー依頼）
+追加機能の説明:
+- ユーザーが「ドキュメントライター」を依頼
+- プロジェクトのドキュメント作成エージェントを起動予定
+決定事項: document-writerエージェントを起動してドキュメント作成
+次のTODO: ユーザーの意図を確認（README、API仕様書、CHANGELOG等）
+---
+
+---
+2026-02-07 07:05
+作業項目: README.md更新（M2DX現状に合わせて刷新）
+追加機能の説明:
+- 旧README.mdを最新のプロジェクト状態に更新
+- 削除項目: C++, Objective-C++ブリッジ, AUv3, 8オペレータ, 64アルゴリズム
+- 追加項目: Pure Swift 6.1+, 6オペレータ, 32アルゴリズム, AVAudioSourceNode, MIDI 2.0 UMP, MIDI-CI Property Exchange
+- ビルド方法、アーキテクチャ、MIDI機能、オーディオ機能を正確に記載
+- 日本語で記述（ユーザー要求）
+決定事項: README.mdを現在のコードベースに合致する内容に全面刷新
+次のTODO: README.md書き込み
+---
+
+---
+2026-02-07 07:05
+作業項目: MIDI 2.0 フルプレシジョン対応 — 実装完了
+追加機能の説明:
+- MIDIEventQueue: data2 を UInt8→UInt32 に変更（velocity16/CC32/PB32格納）
+- MIDITransport: MIDIReceivedData に umpWord1/umpWord2 フィールド追加
+- CoreMIDITransport: handleEventList type 0x4 で生UMPワードをMIDIReceivedDataに保存
+  - allPacketData を ([UInt8], UInt32, UInt32) タプル配列に変更
+  - processReceivedData にumpWord1/umpWord2引数を追加
+- MIDIInputManager:
+  - onNoteOn: (UInt8, UInt8)→(UInt8, UInt16) — 16-bit velocity
+  - onControlChange: (UInt8, UInt8)→(UInt8, UInt32) — 32-bit CC
+  - onPitchBend: (UInt8, UInt8)→(UInt32) — 32-bit pitch bend
+  - handleUMPData() 新メソッド: umpWord1!=0の場合、生UMPから直接フルプレシジョンでデコード
+  - handleReceivedData() MIDI 1.0フォールバック: 7→16/32bitアップスケール
+- M2DXAudioEngine:
+  - noteOn velocity16: UInt16
+  - controlChange value32: UInt32
+  - pitchBend UInt32
+- FMSynthEngine:
+  - doNoteOn velocity16: UInt16 → velScale = Float(vel16)/65535.0
+  - doPitchBend32: 32-bit unsigned (center=0x80000000) → ±2半音
+  - doControlChange value32: sustain閾値 0x40000000
+  - Voice.noteOn velocity16対応
+- M2DXFeature:
+  - MIDIコールバック接続を新シグネチャに更新
+  - タッチキーボード: UInt16(velocity) << 9 で7→16bit変換
+- iOS実機ビルド成功(BUILD SUCCEEDED)・インストール・起動成功
+決定事項: MIDI 2.0フルプレシジョン処理パイプライン完成、7-bit→16/32-bitへの統一完了
+次のTODO: ユーザーにKeyStageでvelocityダイナミクス・ピッチベンド・ペダルの動作確認を依頼
+---
+---
+2026-02-07 07:05
+作業項目: CHANGELOG.md作成（日本語版）
+追加機能の説明:
+- docs/CHANGELOG.md新規作成（Keep a Changelog形式）
+- Git履歴(e444673〜6ab2b79)から変更内容を抽出
+- グループ分け: Added, Changed, Fixed, Removed
+- 日本語で記述
+決定事項: プロジェクト開始からの全履歴をCHANGELOGとして記録
+次のTODO: docs/CHANGELOG.md書き込み
+---
+
+---
+2026-02-07 07:06
+作業項目: APIリファレンスドキュメント作成開始
+追加機能の説明:
+- ユーザー依頼で docs/APIReference.md を作成
+- 日本語で記述
+- 対象ファイル: FMSynthEngine, M2DXAudioEngine, MIDIInputManager, MIDIEventQueue, M2DXCore, DX7Preset
+決定事項: ソースコードを読んで正確なAPI仕様書を作成
+次のTODO: ソースファイル読解→APIReference.md書き込み
+---
+
+---
+2026-02-07 07:06
+作業項目: APIリファレンスドキュメント作成完了
+追加機能の説明:
+- docs/APIReference.md 新規作成（日本語、約600行）
+- 構成:
+  - M2DXFeature: FMSynthEngine, M2DXAudioEngine, MIDIInputManager, MIDIEventQueue
+  - M2DXCore: OperatorParameters, EnvelopeParameters, KeyboardLevelScaling, DX7Preset, DX7OperatorPreset
+- 各クラス/構造体の全パブリックメソッド・プロパティを完全記載
+- スレッドセーフティ一覧表を追加
+- MIDI 2.0対応機能をまとめて記載
+- サンプルコード3例を追加（エンジン起動、MIDI接続、プリセット読み込み）
+決定事項: APIリファレンス作成完了
+次のTODO: ワークログ確認→回答
+---
+---
+2026-02-07 07:05
+作業項目: Architecture.md更新 — Pure Swift実装に刷新
+追加機能の説明:
+- 旧: C++ DSP, Objective-C++ bridge, AUv3, 8オペレータ, 64アルゴリズム
+- 新: Pure Swift 6.1+, 6オペレータ, 32アルゴリズム, AVAudioSourceNode, FMSynthEngine, MIDI 2.0
+- システム構成図、データフロー、並行性モデル、依存関係を最新状態に更新
+- 日本語で記述
+決定事項: Architecture.mdを現在のコードベースに合致する内容に全面刷新
+次のTODO: docs/Architecture.md書き込み
+---
+
+
+---
+2026-02-07 07:06
+作業項目: MIDI 2.0 フルプレシジョン対応 — 動作確認OK
+追加機能の説明:
+- ユーザーが実機で動作確認完了
+決定事項: MIDI 2.0フルプレシジョン対応の実装・動作確認完了
+次のTODO: コミット
+---
+
+---
+2026-02-07 07:06
+作業項目: CHANGELOG.md作成完了
+追加機能の説明:
+- /Users/hakaru/Desktop/Develop/M2DX/docs/CHANGELOG.md 新規作成
+- Keep a Changelog形式で日本語記述
+- セクション構成:
+  - [Unreleased]: MIDI 2.0フルプレシジョン対応
+  - [2026-02-07]: ソフトクリッピング + AVAudioSourceNode + リファクタリング + MIDI 2.0対応
+  - 過去バージョン: MIDI2Kit移行、スタンドアロン、初回リリース
+- Added/Changed/Fixed/Removed でグループ化
+- コードベース削減(737行)、レイテンシ改善、歪み修正等を記録
+決定事項: CHANGELOG.md作成完了
+次のTODO: なし
+---
+
+---
+2026-02-07 07:07
+作業項目: README.md更新完了
+追加機能の説明:
+- /Users/hakaru/Desktop/Develop/M2DX/README.md を最新のプロジェクト状態に全面刷新
+- 削除項目: C++ DSP, Objective-C++ブリッジ, AUv3, 8オペレータ, 64アルゴリズム
+- 追加項目:
+  - Pure Swift 6.1+ 実装
+  - 6オペレータ、32アルゴリズム (データ駆動型)
+  - AVAudioSourceNode (ゼロレイテンシ)
+  - MIDI 2.0 UMP (type 0x4 Channel Voice)
+  - 16-bit velocity, 32-bit CC, 32-bit pitch bend
+  - MIDI-CI Property Exchange (155+パラメータ)
+  - ソフトクリッピング (Padé近似tanh)
+  - サスティンペダル (CC64)
+  - DX7プリセットライブラリ (32種類)
+- 構成:
+  - アーキテクチャ詳細（Pure Swift, AVAudioSourceNode, MIDI2Kit）
+  - ビルド方法（Workspace + SPM + MIDI2Kit依存）
+  - 使い方（MIDI入力、プリセット、ペダル、ピッチベンド）
+  - 技術仕様（FMアルゴリズム、MIDI 2.0対応表）
+  - Git履歴（主要マイルストーン11件）
+- 日本語で記述
+決定事項: README.md更新完了、現在のコードベースに正確に合致
+次のTODO: なし
+---
+
+---
+2026-02-07 07:08
+作業項目: MIDI 2.0対応状況ドキュメント作成（追加依頼）
+追加機能の説明:
+- ユーザーが「MIDI 2.0 Ready、対応状況」のドキュメント追加を依頼
+- M2DXのMIDI 2.0対応状況を網羅的にまとめたドキュメントを作成予定
+- 対象: UMP, Channel Voice, Property Exchange, MIDI-CI, 高精度制御等
+決定事項: docs/MIDI2Ready.md を新規作成
+次のTODO: document-writerエージェント起動
+---
+
+---
+2026-02-07 07:09
+作業項目: MIDI 2.0対応状況ドキュメント作成
+追加機能の説明:
+- docs/MIDI2Ready.md 新規作成を開始
+- ソースファイル読解: MIDIInputManager, MIDIEventQueue, FMSynthEngine, M2DXAudioEngine, PropertyExchange関連、MIDI2Kit
+- 日本語で記述
+- 対応機能: UMP, type 0x4 Channel Voice, 16-bit velocity, 32-bit CC/PB, Property Exchange 155+params, MIDI-CI
+- 未対応機能: Per-Note Controllers, Profile Configuration, SysEx 8等
+- チェックリスト形式の対応状況一覧表を含む
+決定事項: MIDI 2.0対応状況の網羅的ドキュメント作成
+次のTODO: ソースファイル読解→MIDI2Ready.md書き込み
+---
+
+---
+2026-02-07 07:11
+作業項目: MIDI2Kitライブラリ参照方法の確認
+追加機能の説明: 調査のみ（コード変更なし）
+決定事項: ローカルパス参照で依存している
+次のTODO: なし
+---
+---
+2026-02-07 07:12
+作業項目: MIDI 2.0対応状況ドキュメント作成完了
+追加機能の説明:
+- docs/MIDI2Ready.md 新規作成完了（約600行、日本語）
+- ソースコード読解: MIDIInputManager, MIDIEventQueue, FMSynthEngine, M2DXAudioEngine, M2DXParameterTree
+- ドキュメント構成:
+  1. MIDI 2.0対応状況の概要と "MIDI 2.0 Ready" の定義
+  2. Universal MIDI Packet (UMP) 対応 (._2_0プロトコル、UMPワード保存)
+  3. MIDI 2.0 Channel Voice Messages対応状況一覧表
+  4. 高精度MIDI制御 (16-bit velocity, 32-bit CC/PB)
+  5. MIDI-CI (Capability Inquiry) 対応
+  6. Property Exchange (PE) 対応 (155+パラメータ階層ツリー)
+  7. コード実装詳細 (handleUMPData, MIDIEventQueue拡張等)
+  8. MIDI 2.0未対応機能と今後のロードマップ (PNCC, PNPB, RPN/NRPN, LFO/PitchEG等)
+  9. MIDI2Kit依存関係
+  10. 実装済み機能の動作確認方法
+  11. まとめとコードベース統計
+- 対応機能チェックリスト:
+  - ✅ UMP基本プロトコル
+  - ✅ Message Type 0x4 (MIDI 2.0 CV)
+  - ✅ 16-bit Velocity
+  - ✅ 32-bit CC
+  - ✅ 32-bit Pitch Bend
+  - ✅ MIDI 1.0 Fallback (type 0x2)
+  - ✅ MIDI-CI Discovery
+  - ✅ Property Exchange (155+ params)
+  - ❌ Per-Note Controllers (未対応)
+  - ❌ Per-Note Pitch Bend (未対応)
+  - ❌ RPN/NRPN (未対応)
+  - ❌ Profile Configuration (未対応)
+  - ❌ SysEx 8 (未対応)
+決定事項: MIDI 2.0対応状況ドキュメント完成
+次のTODO: なし
+---
+
+---
+2026-02-07 07:13
+作業項目: docs/TODO.md 新規作成
+追加機能の説明:
+- リリース前TODO: MIDI2Kitをリモートリポジトリ参照に切り替えてテスト
+決定事項: docs/TODO.md にTODOを管理する
+次のTODO: なし
+---
