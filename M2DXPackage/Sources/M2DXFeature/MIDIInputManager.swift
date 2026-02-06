@@ -1,11 +1,8 @@
 // MIDIInputManager.swift
-// External MIDI device input via MIDIKit with MIDI 2.0 UMP support
+// External MIDI device input via MIDI2Kit with MIDI 2.0 UMP support
 
 import Foundation
-import MIDIKit
-
-// Type alias to disambiguate from local MIDIEvent
-private typealias MKEvent = MIDIKitCore.MIDIEvent
+import MIDI2Kit
 
 // MARK: - MIDI Input Manager
 
@@ -16,8 +13,11 @@ public final class MIDIInputManager {
 
     // MARK: - Properties
 
-    /// MIDIKit manager
-    private var midiManager: MIDIManager?
+    /// MIDI2Kit transport
+    private var transport: CoreMIDITransport?
+
+    /// Task for receiving MIDI data
+    private var receiveTask: Task<Void, Never>?
 
     /// Whether MIDI is initialized
     public private(set) var isConnected: Bool = false
@@ -49,24 +49,21 @@ public final class MIDIInputManager {
     /// Start MIDI input manager
     public func start() {
         do {
-            let manager = MIDIManager(
-                clientName: "M2DX",
-                model: "M2DX FM Synthesizer",
-                manufacturer: "M2DX"
-            )
-            try manager.start()
-            self.midiManager = manager
+            let midi = try CoreMIDITransport(clientName: "M2DX")
+            self.transport = midi
 
-            // Create input connection that listens to all sources
-            try manager.addInputConnection(
-                to: .allOutputs,
-                tag: "M2DX-Input",
-                receiver: .events { [weak self] events, _, _ in
-                    Task { @MainActor in
-                        self?.handleMIDIEvents(events)
-                    }
+            // Connect to all available MIDI sources
+            let transportRef = midi
+            receiveTask = Task { [weak self] in
+                // Connect sources
+                try? await transportRef.connectToAllSources()
+
+                // Listen for MIDI data
+                for await received in transportRef.received {
+                    guard let self else { break }
+                    await self.handleReceivedData(received.data)
                 }
-            )
+            }
 
             isConnected = true
             errorMessage = nil
@@ -79,8 +76,16 @@ public final class MIDIInputManager {
 
     /// Stop MIDI input manager
     public func stop() {
-        midiManager?.removeAll()
-        midiManager = nil
+        receiveTask?.cancel()
+        receiveTask = nil
+
+        if let transport {
+            Task {
+                await transport.disconnectAllSources()
+                await transport.shutdown()
+            }
+        }
+        transport = nil
         isConnected = false
         connectedDevices = []
     }
@@ -89,53 +94,100 @@ public final class MIDIInputManager {
 
     /// Refresh the list of connected MIDI devices
     public func refreshDeviceList() {
-        guard let manager = midiManager else {
+        guard let transport else {
             connectedDevices = []
             return
         }
 
-        connectedDevices = manager.endpoints.outputs.map { $0.displayName }
+        Task {
+            let sources = await transport.sources
+            await MainActor.run {
+                self.connectedDevices = sources.map { $0.name }
+            }
+        }
     }
 
     // MARK: - Event Handling
 
-    private func handleMIDIEvents(_ events: [MKEvent]) {
-        for event in events {
-            // Channel filter: 0 = Omni (accept all), 1-16 = specific
-            if receiveChannel > 0 {
-                if let ch = event.channel?.intValue, ch + 1 != receiveChannel {
-                    continue
-                }
+    /// Handle raw MIDI bytes received from CoreMIDITransport
+    private func handleReceivedData(_ data: [UInt8]) async {
+        // Process MIDI 1.0 byte stream (most common from CoreMIDI PacketList)
+        var offset = 0
+        while offset < data.count {
+            let statusByte = data[offset]
+
+            // Skip non-status bytes (running status not handled for simplicity)
+            guard statusByte & 0x80 != 0 else {
+                offset += 1
+                continue
             }
 
-            switch event {
-            case .noteOn(let noteOn):
-                let note = noteOn.note.number.uInt8Value
-                let velocity = noteOn.velocity.midi1Value.uInt8Value
-                if velocity == 0 {
-                    onNoteOff?(note)
-                } else {
-                    onNoteOn?(note, velocity)
-                }
+            let statusNibble = statusByte >> 4
+            let channel = statusByte & 0x0F
 
-            case .noteOff(let noteOff):
-                let note = noteOff.note.number.uInt8Value
-                onNoteOff?(note)
+            // Channel filter: 0 = Omni (accept all), 1-16 = specific
+            let passesFilter = receiveChannel == 0 || Int(channel) + 1 == receiveChannel
 
-            case .cc(let cc):
-                let controller = cc.controller.number.uInt8Value
-                let value = cc.value.midi1Value.uInt8Value
-                onControlChange?(controller, value)
-
-                // CC 123 = All Notes Off
-                if controller == 123 {
-                    for n: UInt8 in 0...127 {
-                        onNoteOff?(n)
+            switch statusNibble {
+            case 0x9: // Note On
+                guard offset + 2 < data.count else { break }
+                let note = data[offset + 1]
+                let velocity = data[offset + 2]
+                if passesFilter {
+                    if velocity == 0 {
+                        await MainActor.run { onNoteOff?(note) }
+                    } else {
+                        await MainActor.run { onNoteOn?(note, velocity) }
                     }
+                }
+                offset += 3
+
+            case 0x8: // Note Off
+                guard offset + 2 < data.count else { break }
+                let note = data[offset + 1]
+                if passesFilter {
+                    await MainActor.run { onNoteOff?(note) }
+                }
+                offset += 3
+
+            case 0xB: // Control Change
+                guard offset + 2 < data.count else { break }
+                let controller = data[offset + 1]
+                let value = data[offset + 2]
+                if passesFilter {
+                    await MainActor.run { onControlChange?(controller, value) }
+
+                    // CC 123 = All Notes Off
+                    if controller == 123 {
+                        await MainActor.run {
+                            for n: UInt8 in 0...127 {
+                                onNoteOff?(n)
+                            }
+                        }
+                    }
+                }
+                offset += 3
+
+            case 0xE: // Pitch Bend
+                offset += 3
+
+            case 0xC, 0xD: // Program Change, Channel Pressure
+                offset += 2
+
+            case 0xF: // System messages
+                switch statusByte {
+                case 0xF0: // SysEx start - skip until F7
+                    while offset < data.count && data[offset] != 0xF7 {
+                        offset += 1
+                    }
+                    offset += 1
+                case 0xF1, 0xF3: offset += 2  // MTC, Song Select
+                case 0xF2: offset += 3          // Song Position
+                default: offset += 1            // Real-time, etc.
                 }
 
             default:
-                break
+                offset += 1
             }
         }
     }

@@ -20,16 +20,13 @@ let package = Package(
         ),
     ],
     dependencies: [
-        // MIDIKit for MIDI 2.0 support
-        .package(url: "https://github.com/orchetect/MIDIKit.git", from: "0.9.0"),
+        // MIDI2Kit for MIDI 2.0 support (local development)
+        .package(path: "../../MIDI2Kit"),
     ],
     targets: [
         // MARK: - Core
         .target(
             name: "M2DXCore",
-            dependencies: [
-                .product(name: "MIDIKit", package: "MIDIKit"),
-            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
                 .enableExperimentalFeature("StrictConcurrency"),
@@ -45,7 +42,7 @@ let package = Package(
             name: "M2DXFeature",
             dependencies: [
                 "M2DXCore",
-                .product(name: "MIDIKit", package: "MIDIKit"),
+                .product(name: "MIDI2Kit", package: "MIDI2Kit"),
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6),

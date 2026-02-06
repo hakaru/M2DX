@@ -1064,3 +1064,102 @@
 決定事項: macOSデスクトップスタンドアロン版は完全動作確認済み
 次のTODO: コミット
 ---
+
+---
+2026-02-06 15:44
+作業項目: MIDI2Kit採用状況調査
+追加機能の説明:
+- MIDI2Kit (midi2kit.dev) の現状を調査
+- v1.0.5リリース済み、macOS/iOS対応
+- UMP、MIDI-CI、Property Exchangeをサポート
+- 採用アプリ: simpleMIDIController (App Store)、Midi2Explorer (近日公開)
+- GitHubでの公開リポジトリは確認できず（プライベート/商用SDKの可能性）
+- 競合: MIDIKit (orchetect) はGitHubオープンソースで広く採用
+決定事項: 調査結果をユーザーに報告
+次のTODO: なし
+---
+
+---
+2026-02-06 15:46
+作業項目: MIDI2Kit方針確定
+追加機能の説明:
+- MIDI2Kitはユーザー（hakaru氏）の自作ライブラリであることが判明
+- M2DXはMIDI2Kitのリファレンス実装・ドッグフーディングアプリとしての役割を持つ
+- M2DXでMIDI2Kitを積極採用し、以下の役割を担う:
+  1. バグ発見・修正（実アプリでの使用による検証）
+  2. 機能追加の提言（実装中に必要になるAPIの特定）
+  3. リファレンス実装（MIDI2Kit採用アプリの実例として公開）
+決定事項:
+- M2DXではMIDIKitからMIDI2Kitへ移行を進める
+- Property Exchange統合にMIDI2KitのCIManager/PE APIを使用
+- M2DXでの実使用を通じてMIDI2Kitの品質向上に貢献
+次のTODO:
+- M2DXのMIDI入力をMIDI2Kit経由に切り替え計画
+- Property Exchange統合のMIDI2Kit API活用検討
+---
+
+---
+2026-02-06 15:50
+作業項目: MIDI2Kit ローカルソースコード調査開始
+追加機能の説明:
+- /Users/hakaru/Desktop/Develop/MIDI2Kit-SDK/ および /Users/hakaru/Desktop/Develop/MIDI2Kit/ の調査を開始
+- 調査目的:
+  1. MIDI2Kit SDKの Package.swift確認（product名、target構成）
+  2. MIDI2Client クラスの全publicメソッド・プロパティ確認
+  3. MIDI入力イベント（Note On/Off等）の受信方法
+  4. MIDIデバイス一覧の取得方法
+  5. チャンネルフィルタリング方法
+  6. UMPメッセージ型定義（NoteOn, NoteOff, CC等）
+  7. 特にMIDIInputManager.swiftの機能をMIDI2Kitで実現する方法
+- 調査モード: 読み取り専用（コード作成なし）
+決定事項: MIDI2Kit採用に向けた調査を開始
+次のTODO: 各ファイルを読み込んで調査を進める
+---
+
+---
+2026-02-06 15:49
+作業項目: MIDIKit → MIDI2Kit移行実装開始
+追加機能の説明:
+- MIDI2Kitローカルソース調査完了
+- MIDI2Kit API把握:
+  - MIDI2Client (actor): start(), makeEventStream(), discoveredDevices
+  - CoreMIDITransport: received AsyncStream, sources/destinations
+  - UMP型: UMPMIDI2ChannelVoice (.noteOn/.noteOff/.controlChange)
+- 移行ポイント:
+  - Package.swift: MIDIKit → MIDI2Kit依存に変更
+  - MIDIInputManager.swift: MIDIManager → CoreMIDITransport + UMPParser
+  - M2DXCore: MIDIKit依存除去
+決定事項: ローカルパス参照でMIDI2Kit依存を追加
+次のTODO: Package.swift修正 → MIDIInputManager.swift書き換え → ビルド確認
+---
+
+---
+2026-02-06 15:58
+作業項目: MIDIKit → MIDI2Kit移行完了
+追加機能の説明:
+- Package.swift変更:
+  - MIDIKit依存を完全除去
+  - MIDI2Kit ローカルパス参照に置き換え (.package(path: "../../MIDI2Kit"))
+  - M2DXCoreからMIDIKit依存除去（元々import未使用だった）
+  - M2DXFeatureの依存をMIDI2Kitに変更
+- MIDIInputManager.swift全面書き換え:
+  - import MIDIKit → import MIDI2Kit
+  - MIDIManager → CoreMIDITransport
+  - MIDIKit受信ブロック → AsyncStream<MIDIReceivedData>
+  - connectToAllSources()で全MIDIソース接続
+  - 生MIDIバイト列パーサー実装（status byte解析）
+  - Note On/Off, CC, SysEx, System対応
+  - チャンネルフィルタ（Omni/特定チャンネル）維持
+  - CC123 All Notes Off対応維持
+  - デバイス一覧: transport.sources で取得
+- ビルド結果:
+  - iOS: BUILD SUCCEEDED
+  - macOS: BUILD SUCCEEDED
+決定事項:
+- MIDI2KitのCoreMIDITransportを直接使用（MIDI2Clientは将来PE統合時に使用）
+- MIDIバイト列パーサーはMIDI 1.0 PacketList互換
+- ローカルパス参照で開発サイクル高速化
+次のTODO:
+- 実機でMIDI入力テスト
+- 問題なければコミット
+---
