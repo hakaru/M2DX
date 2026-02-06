@@ -59,10 +59,11 @@ public struct MIDIKeyboardView: View {
 
                 // All notes off button
                 Button {
-                    pressedNotes.removeAll()
-                    for note in 0...127 {
-                        onNoteOff(UInt8(note))
+                    // Only send note off for actually pressed notes
+                    for note in pressedNotes {
+                        onNoteOff(note)
                     }
+                    pressedNotes.removeAll()
                 } label: {
                     Image(systemName: "stop.circle")
                         .font(.title2)

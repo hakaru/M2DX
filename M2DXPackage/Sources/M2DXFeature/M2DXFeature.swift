@@ -113,9 +113,20 @@ public struct M2DXRootView: View {
             .task {
                 // Start audio engine when view appears
                 await audioEngine.start()
-            }
-            .onDisappear {
-                audioEngine.stop()
+
+                // Wait for cancellation (view disappears)
+                // withTaskCancellationHandler ensures cleanup on cancel
+                await withTaskCancellationHandler {
+                    // Keep task alive until cancelled
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(1))
+                    }
+                } onCancel: {
+                    // Clean up when task is cancelled (view disappears)
+                    Task { @MainActor in
+                        audioEngine.stop()
+                    }
+                }
             }
         }
     }

@@ -460,3 +460,86 @@
 - 実機インストール・動作確認
 - 音が出ることを確認
 ---
+---
+2026-02-06 11:26
+作業項目: スタンドアロン音声再生コードレビュー実施
+追加機能の説明:
+- M2DXAudioEngine.swift - AVAudioEngineホスティング、MIDI処理
+- MIDIKeyboardView.swift - ピアノ鍵盤UI
+- M2DXFeature.swift - エンジン統合
+レビュー観点:
+- Swift 6 strict mode対応（スレッドセーフ、Sendable）
+- オーディオセッション管理
+- メモリ管理（retain cycle）
+- エラーハンドリング
+- UI/UX問題
+- AUv3ホスティングベストプラクティス
+決定事項: コードレビュー開始
+次のTODO: レビューレポート作成
+---
+---
+2026-02-06 11:29
+作業項目: スタンドアロン音声再生コードレビュー完了
+追加機能の説明:
+レビュー結果:
+- 🔴 Critical: 3件（force unwrap、スレッドセーフティ、AVAudioSession管理）
+- 🟡 Warning: 6件（クリーンアップ不足、didSet副作用、プロセスモード選択等）
+- 🔵 Suggestion: 7件（Sendable対応、コード重複、定数化等）
+レビュー対象:
+1. M2DXAudioEngine.swift - AVAudioEngineホスティング、MIDI処理
+2. MIDIKeyboardView.swift - ピアノ鍵盤UI（白鍵/黒鍵計算）
+3. M2DXFeature.swift - エンジン統合、.task/.onDisappear
+良かった点:
+- AVAudioEngineとAUv3の適切な統合
+- MIDIキーボードUIの実装品質が高い
+- @Observableによる最新のSwiftUI状態管理
+- オーディオエンジン稼働インジケーター
+決定事項:
+- docs/code-review-standalone-audio-20260206.md 作成完了
+- Critical問題3件の即時修正を推奨
+- リアルタイムオーディオのエラーハンドリング強化が必要
+次のTODO:
+- force unwrap除去（midiData.baseAddress!）
+- AVAudioSession管理改善（割り込み対応、エラーハンドリング）
+- stop()メソッドの完全なクリーンアップ実装
+- 実機レイテンシ測定
+---
+
+---
+2026-02-06 11:32
+作業項目: Critical問題修正完了
+追加機能の説明:
+- M2DXAudioEngine.swift Critical修正:
+  1. force unwrap除去 - `buffer.baseAddress!` → `guard let`
+  2. AVAudioSessionエラーハンドリング - AudioEngineError専用エラー型追加
+  3. didSetでisRunningチェック追加
+  4. stop()でノートオフ送信・セッション非アクティブ化
+  5. activeNotes管理で発音中ノートを追跡
+  6. ParameterAddress定数でマジックナンバー除去
+  7. opIndex範囲チェック追加
+- MIDIKeyboardView.swift修正:
+  - allNotesOff: 0-127ループ → pressedNotesのみオフ
+- M2DXFeature.swift修正:
+  - .task + .onDisappear競合 → withTaskCancellationHandler使用
+- 実機ビルド成功（BUILD SUCCEEDED）
+決定事項:
+- loadInProcessはiOSでは使用不可、空オプションを使用
+- @MainActorクラスなのでスレッドセーフ
+次のTODO:
+- 実機インストール・動作確認
+---
+
+---
+2026-02-06 11:35
+作業項目: Critical問題修正をコミット・プッシュ
+追加機能の説明:
+- スタンドアロン音声再生のCritical問題修正をコミット
+- M2DXAudioEngine.swift: force unwrap除去、AudioEngineErrorエラー型、ParameterAddress定数
+- MIDIKeyboardView.swift: allNotesOff改善
+- M2DXFeature.swift: withTaskCancellationHandler使用
+- docs/code-review-standalone-audio-20260206.md 追加
+決定事項: Critical修正完了、コミット・プッシュ
+次のTODO:
+- 実機インストール
+- サウンド出力確認
+---
