@@ -1,0 +1,336 @@
+# Claude Worklog 2026-02-07
+
+---
+2026-02-07 01:05
+作業項目: ソフトクリッピング修正 動作確認OK・コミット
+追加機能の説明:
+- ユーザーがiOS実機でKeyStageを使って音質改善を確認
+- tanhApprox ソフトクリッピングにより、iOS版の音割れ問題が解消
+- FMSynthEngine.swift の変更をコミット
+決定事項: ソフトクリッピング修正は成功
+次のTODO: コミット・プッシュ
+---
+
+---
+2026-02-07 01:12
+作業項目: INIT VOICEでも歪む問題の修正
+追加機能の説明:
+- 問題: INIT VOICEの単純なサイン波でも歪みが発生
+- 原因分析:
+  - INIT VOICE: OP1のみ outputLevel=99 → normalizedLevel=1.0
+  - FMOperator出力: sin() * 1.0 * 1.0 = ±1.0
+  - ALG1正規化: * 0.707
+  - Render: / (sqrt(activeCount) * 0.7)
+  - 単音: ±1.01 → masterVol(0.7) → ±0.707 (ギリギリ)
+  - 2音: sqrt(2)*0.7=0.99 → ほぼ限界
+  - 3音以上: 確実にクリップ
+- 修正:
+  - kVoiceNormalizationScale: 0.7 → 0.25 (ヘッドルーム大幅増)
+  - masterVolume デフォルト: 0.7 → 0.8
+  - ソフトクリッピング(tanh)は前回追加済みで安全弁として残す
+- 計算: 単音 = ±0.707 / (1*0.25) * 0.8 = ±2.26 → tanh → ±0.98
+  - 4音和音 = ±2.83 / (2*0.25) * 0.8 = ±4.53 → tanh → ±1.0 (ソフトクリップ)
+  - ソフトクリップなので歪みは自然な飽和感
+- iOS実機ビルド成功・インストール・起動成功
+決定事項: ボイスゲインを大幅低減して和音でもクリップしないように調整
+次のTODO: ユーザーに音質確認を依頼
+---
+
+---
+2026-02-07 01:15
+作業項目: レベル調整の計算ミス修正
+追加機能の説明:
+- 前回の修正が逆効果だった: kVoiceNormalizationScale 0.7→0.25 は分母を小さくし出力が4倍に増大
+- `output /= sqrtf(Float(activeCount)) * kVoiceNormalizationScale` の優先順位:
+  - `/=` は `*` より低い → `output = output / (sqrt(activeCount) * scale)`
+  - scale を小さくすると分母が小さくなり出力が大きくなる（逆方向）
+- 正しい修正: kVoiceNormalizationScale 0.7 → 3.0
+  - 1音: 0.707/(1*3.0)*0.8 = 0.19 — クリーン
+  - 4音和音: 2.83/(2*3.0)*0.8 = 0.38 — クリーン
+  - 8音: 5.66/(2.83*3.0)*0.8 = 0.53 — クリーン
+  - 16音(最大): 11.3/(4*3.0)*0.8 = 0.75 — クリーン
+- 実機ビルド・インストール・起動成功
+決定事項: 分母のスケール値は大きくする必要がある
+次のTODO: ユーザーに音質確認を依頼
+---
+
+---
+2026-02-07 01:24
+作業項目: バッファスケジューリングのギャップ問題修正
+追加機能の説明:
+- INIT VOICEでも歪む問題が継続 → レベルの問題ではなくバッファギャップが原因と判断
+- 旧方式: シングルバッファ + semaphore.wait()
+  - バッファ再生完了→レンダー→スケジュール の間に無音ギャップ発生
+  - ギャップがクリック/ポップノイズとして聞こえる
+- 新方式: トリプルバッファリング
+  - semaphore(value: 3) で3バッファ分のスロットを管理
+  - 常に2-3バッファがキューに入った状態を維持
+  - 再生完了時に1スロット解放→即座に次のバッファをレンダー・スケジュール
+  - ギャップレス再生を実現
+- バッファサイズ: 512 → 1024フレーム（≈21ms at 48kHz）に増加
+  - レイテンシ微増だが安定性向上
+- iOS実機ビルド・インストール・起動成功
+決定事項: トリプルバッファリングでギャップレス再生
+次のTODO: ユーザーに音質確認を依頼
+---
+
+---
+2026-02-07 01:30
+作業項目: MIDIレイテンシ低減
+追加機能の説明:
+- 問題: 鍵盤を弾いてから音が出るまでが遅い
+- 原因: 1024フレーム × 3バッファ = 約63msのレイテンシ
+- 修正:
+  - バッファサイズ: 1024 → 256フレーム（≈5.3ms at 48kHz）
+  - バッファ数: 3 → 2（ダブルバッファリング）
+  - 合計レイテンシ: 256×2/48000 ≈ 10.7ms（十分低い）
+- 実機ビルド・インストール・起動成功
+決定事項: 256フレーム×2バッファで低レイテンシ＋ギャップレス再生の両立
+次のTODO: ユーザーにレイテンシと音質を確認してもらう
+---
+
+---
+2026-02-07 01:35
+作業項目: MIDIレイテンシ追加改善 — Task{}非同期ホップ除去 + バッファ128化
+追加機能の説明:
+- 問題: 256フレーム×2バッファでもまだ遅い
+- 原因分析:
+  - CoreMIDITransport.handleEventList内のTask{}が非同期ホップを発生
+  - CoreMIDIコールバック→Task作成→await processReceivedData→yield で数ms追加
+  - バッファサイズ256フレーム(≈5.3ms)×2 = 10.7ms + 非同期ホップ遅延
+- 修正計画:
+  - handleEventListで非SysExデータはTask{}を経由せずreceivedContinuationに直接yield
+  - SysExデータのみTask{}経由でSysExAssemblerに送る
+  - バッファサイズ: 256 → 128フレーム（≈2.7ms at 48kHz）
+  - 合計レイテンシ: 128×2/48000 ≈ 5.3ms + CoreMIDI直接yield
+決定事項: 非同期ホップ除去とバッファ縮小で最小レイテンシを追求
+次のTODO: 実装・ビルド・実機テスト
+---
+
+---
+2026-02-07 01:37
+作業項目: バッファ128フレームで歪み再発 → 256に戻す
+追加機能の説明:
+- 問題: バッファサイズ128フレームにしたら歪みが再発
+- 原因: 128フレーム(≈2.7ms)だとレンダーループが間に合わずバッファアンダーラン発生
+- 修正: bufferFrameCount を 128 → 256 に戻す
+- Task{}除去による非同期ホップ改善はそのまま維持
+決定事項: 128フレームはiOSでは小さすぎる、256フレームが最小安定値
+次のTODO: 再ビルド・実機テスト
+---
+
+---
+2026-02-07 01:38
+作業項目: レイテンシ最適化完了
+追加機能の説明:
+- 256フレーム×2バッファ + Task{}除去が現状の限界点
+- 合計レイテンシ: ≈10.7ms(バッファ) + AsyncStream yield遅延
+- ユーザー確認: 「この辺が限界か」→ 現状で受容
+- 今後さらに改善するにはAVAudioSourceNodeへの移行が必要（CoreAudioレンダーコールバック直接利用）
+決定事項: 現在のPlayerNode方式でのレイテンシ最適化は完了
+次のTODO: コミット
+---
+
+---
+2026-02-07 01:40
+作業項目: AVAudioSourceNode移行でゼロレイテンシ化
+追加機能の説明:
+- 問題: AVAudioPlayerNode + バッファスケジューリングでは≈10.7msが限界
+- 解決策: AVAudioSourceNodeに移行
+  - CoreAudioのレンダーコールバックで直接synthを呼び出す
+  - バッファキューイングのオーバーヘッドがゼロ
+  - iOSのIOBufferDuration(5ms)がそのままレイテンシになる
+- 変更内容:
+  - AVAudioPlayerNode → AVAudioSourceNode
+  - renderLoop(Thread) → AVAudioSourceNode renderBlock
+  - ダブルバッファリング・semaphore → 不要（CoreAudioが管理）
+  - RenderState → 不要
+決定事項: AVAudioSourceNodeでCorAudioレンダーコールバック直接利用
+次のTODO: 実装・ビルド・実機テスト
+---
+
+---
+2026-02-07 01:43
+作業項目: AVAudioSourceNode実装でクラッシュ → 修正
+追加機能の説明:
+- 問題: AVAudioSourceNode版がクラッシュ
+- 原因推定: @MainActor隔離内でnonisolatedクロージャを作成する際のSendable問題
+  または AVAudioSourceNode(format:) が outputNode のフォーマットと不一致
+- 修正: nonisolatedコンテキストでSourceNodeを生成、フォーマットをoutputNodeに合わせる
+決定事項: クラッシュ原因を特定し修正
+次のTODO: 修正・再ビルド・実機テスト
+---
+
+---
+2026-02-07 01:50
+作業項目: AVAudioSourceNode移行成功確認
+追加機能の説明:
+- AVAudioSourceNode版が実機で正常動作を確認
+- nonisolated static makeSourceNodeでクロージャ生成を@MainActor外に分離して解決
+- 音が出ることをユーザーが確認
+決定事項: AVAudioSourceNode移行成功
+次のTODO: レイテンシ体感確認・コミット
+---
+
+---
+2026-02-07 01:51
+作業項目: レイテンシ改善確認完了
+追加機能の説明:
+- ユーザーがKeyStagで実機テスト → レイテンシ改善を確認
+- AVAudioSourceNode移行 + CoreMIDI Task{}除去の効果あり
+- 旧: AVAudioPlayerNode + 256×2バッファ(≈10.7ms) + Task{}非同期ホップ
+- 新: AVAudioSourceNode(CoreAudio直接レンダー) + 直接yield ≈ IOBufferDuration(5ms)のみ
+決定事項: レイテンシ最適化完了、体感で改善確認済み
+次のTODO: リファクタリング・コミット
+---
+
+---
+2026-02-07 02:11
+作業項目: コードベース全体リファクタリング開始
+追加機能の説明:
+- 計画に基づき5ステップのリファクタリングを実施
+- Step 1: M2DXCore.swift 未使用型削除（~280行削減）
+- Step 2: テストファイル更新
+- Step 3: FMSynthEngine.swift アルゴリズムのデータ駆動化（~380行削減）
+- Step 4: FMSynthEngine.swift オペレータアクセスの統合（~50行削減）
+- Step 5: MIDIInputManager.swift 冗長なMainActor.run削除
+決定事項: 新機能追加なし、約660行の純削減目標
+次のTODO: Step 1から順に実施
+---
+
+---
+2026-02-07 02:12
+作業項目: FMSynthEngine全32アルゴリズムの信号フロー解析
+追加機能の説明:
+- alg1〜alg32の各アルゴリズムについて、オペレータ間の変調経路・キャリア・正規化係数を完全にマッピング
+- op0=OP1, op1=OP2, ..., op5=OP6 の対応関係を整理
+- 各オペレータの変調ソース、キャリア判定、正規化係数を一覧表として作成
+決定事項: コード読解・解析のみ（コード変更なし）
+次のTODO: 解析結果をユーザーに提示
+---
+
+---
+2026-02-07 02:21
+作業項目: コードベース全体リファクタリング完了
+追加機能の説明:
+- Step 1完了: M2DXCore.swift 未使用型13個を削除（455→144行、-311行）
+  - SynthEngineMode, DX7Algorithm, M2DXAlgorithm, LFOParameters, ModulationSource,
+    ModulationDestination, ModulationRouting, M2DXVoice, DX7Voice, TX816Module,
+    TX816Configuration, M2DXEngineState, VoiceParameters typealias
+  - OperatorParameters, EnvelopeParameters, KeyboardLevelScalingは残留
+- Step 2完了: M2DXCoreTests.swift テスト更新（195→57行、-138行）
+  - 削除した型のテストを除去、OperatorParametersTests + Envelope/KLS テスト追加
+- Step 3完了: FMSynthEngine.swift アルゴリズムのデータ駆動化
+  - 32個のalg*()メソッドを静的ルーティングテーブル（kAlgorithmTable）に置換
+  - OpRoute構造体（src0/src1/src2/isCarrier）+ AlgorithmRoute構造体（ops tuple + norm）
+  - Voice.process()がテーブルからルーティング情報を読み取って汎用処理
+- Step 4完了: オペレータアクセスの統合
+  - ops タプル + withOp()ヘルパーで6分岐switch文を1箇所に集約
+  - setOpLevel/setOpRatio/setOpDetune等がwithOp経由で簡潔に
+  - FMSynthEngine.swift: 822→536行、-286行
+- Step 5完了: MIDIInputManager.swift 冗長なMainActor.run削除
+  - handleReceivedData内の5箇所のawait MainActor.run { ... }を直接呼び出しに変更
+  - handleReceivedDataをasync→non-asyncに変更（337→335行、-2行）
+- iOS実機ビルド成功確認（BUILD SUCCEEDED）
+- 合計: 1809→1072行 = 737行削減（計画の660行を上回る）
+決定事項: リファクタリング完了、新機能追加なし
+次のTODO: ユーザーに実機演奏テストを依頼、全プリセットで音質確認
+---
+
+---
+2026-02-07 06:14
+作業項目: MIDI入力不具合の調査 — KeyStageがMIDI Input一覧に出ない
+追加機能の説明:
+- ユーザー報告: リファクタリング後、KeyStageがMIDI Input一覧に表示されない
+- 調査開始: MIDIInputManager.swift の変更が原因か確認中
+決定事項: なし（調査中）
+次のTODO: 原因特定と修正
+---
+
+---
+2026-02-07 06:21
+作業項目: MIDI入力不具合のスクリーンショット分析
+追加機能の説明:
+- スクリーンショットで以下を確認:
+  - Sources at connect: Session 1, KBD/CTRL, DAW IN, Bluetooth（全てonline）→ KeyStageのポート
+  - Connected: 4 → 接続成功
+  - Received msgs: 0 → MIDIメッセージ未受信
+  - Transport callback: cb=0 words=0 → CoreMIDIコールバックが一度も発火していない
+  - MIDI Input ピッカー上部に DAW IN, Bluetooth が緑ドット付きで表示あり
+- 分析: KeyStageは検出・接続されているが、CoreMIDIからのデータ配信が来ていない
+- リファクタリングの変更(handleReceivedData非async化)はデータ受信には無関係
+  - handleReceivedDataは受信後の処理。cb=0は受信前の問題
+決定事項: MIDI2Kit CoreMIDITransport層の問題の可能性
+次のTODO: Reconnect MIDI試行、鍵盤操作でReceived msgs変化確認
+---
+
+---
+2026-02-07 06:25
+作業項目: MIDI入力不具合の深掘り調査
+追加機能の説明:
+- 全変更ファイルの差分を再確認:
+  - MIDIInputManager.swift: handleReceivedData async→non-async のみ（受信後処理、cb=0とは無関係）
+  - M2DXAudioEngine.swift: AVAudioSourceNode移行（前セッション、MIDI無関係）
+  - FMSynthEngine.swift: アルゴリズムテーブル化（音声処理、MIDI無関係）
+  - M2DXCore.swift: 未使用型削除（MIDI無関係）
+- MIDI2Kit側にも未コミット変更発見:
+  - CoreMIDITransport.swift: handleEventList内のTask{}除去→直接yield変更（レイテンシ最適化）
+  - 全データTask経由→非SysExは直接receivedContinuation.yield()に変更
+  - ただしcb=0はhandleEventList自体が呼ばれていないことを示し、内部処理変更とは無関係
+- CoreMIDI接続ロジック(connectToAllSources)は変更なし
+- Sources検出4件・Connected4件 → 接続は成功している
+- cb=0 → CoreMIDIのMIDIInputPortのコールバックが一度も発火していない
+- 仮説: MIDI2Kitの直接yield変更をrevertして、全データTask{}経由に戻して検証すべき
+決定事項: CoreMIDITransportのTask{}除去変更が最大の疑い（コールバックスレッドからの直接操作）
+次のTODO: MIDI2KitのCoreMIDITransport変更をrevert→実機ビルド→MIDI動作確認
+---
+
+---
+2026-02-07 06:28
+作業項目: MIDI2Kit直接yield変更をrevert → 実機ビルド・インストール
+追加機能の説明:
+- MIDI2Kit CoreMIDITransport.swiftの変更をrevert:
+  - 直接yield方式 → 元のTask{}経由方式に戻す
+  - handleEventList内: 非SysExデータの直接receivedContinuation.yield()を除去
+  - 全データをTask { await processReceivedData() } 経由に戻す
+- iOS実機ビルド成功 → iPhone 14 Pro Max (Midi)にインストール・起動成功
+- ユーザーにKeyStageでMIDI入力テストを依頼
+- もしrevertで直らない場合、iOS/CoreMIDI環境の問題:
+  - KeyStage USBケーブルの抜き差し
+  - アプリ完全終了→再起動
+  - iOS再起動
+決定事項: MIDI2Kit変更をrevertして検証
+次のTODO: ユーザーにMIDI入力テスト確認を依頼
+---
+
+---
+2026-02-07 06:32
+作業項目: MIDI入力復旧確認
+追加機能の説明:
+- 原因: KeyStageのUSBケーブル抜き差しで復旧 → iOS/CoreMIDI環境の問題だった
+  - コード変更（リファクタリング）は無関係
+  - CoreMIDIデーモンがUSBデバイスの接続状態をキャッシュしていた可能性
+- 音声出力: USBケーブル経由でKeyStageから出力されている
+  - iOSがKeyStageのUSBオーディオインターフェースを検出し、自動的にオーディオ出力先をKeyStageに切り替えた
+- MIDI2Kit CoreMIDITransport.swiftは元のTask{}経由方式にrevert済み
+  - 直接yield方式はレイテンシ改善に有効だが、今回は安全側に戻した
+決定事項: MIDI不具合はUSB接続の問題、コード変更は無関係
+次のTODO: リファクタリング後の音質確認（複数プリセット）、コミット準備
+---
+
+---
+2026-02-07 06:34
+作業項目: リファクタリング音質確認OK → コミット
+追加機能の説明:
+- ユーザーがKeyStage実機で複数プリセットの音質確認完了
+- アルゴリズムテーブル化後の音質に問題なし
+- 全5ステップのリファクタリングが完了・検証済み:
+  1. M2DXCore.swift 未使用型13個削除（-311行）
+  2. テストファイル更新（-138行）
+  3. FMSynthEngine.swift アルゴリズムデータ駆動化（32メソッド→テーブル）
+  4. オペレータアクセス統合（withOp）
+  5. MIDIInputManager.swift MainActor.run除去
+- AVAudioSourceNode移行 + ソフトクリッピング + ゲイン調整も含む
+決定事項: リファクタリング完了、コミット実行
+次のTODO: コミット
+---

@@ -9,7 +9,7 @@ import Foundation
 private let kNumOperators = 6
 private let kMaxVoices = 16
 private let kNumAlgorithms = 32
-private let kVoiceNormalizationScale: Float = 0.7
+private let kVoiceNormalizationScale: Float = 3.0
 private let kTwoPi: Float = 2.0 * .pi
 
 /// Fast tanh approximation for soft clipping (Pade approximant)
@@ -147,12 +147,113 @@ private struct FMOp {
     }
 }
 
+// MARK: - Algorithm Routing Table
+
+/// Per-operator routing: modulation sources (op indices, -1 = none) and carrier flag
+private struct OpRoute {
+    var src0: Int8 = -1
+    var src1: Int8 = -1
+    var src2: Int8 = -1
+    var isCarrier: Bool = false
+}
+
+/// Complete algorithm definition: routing for 6 operators + normalization
+private struct AlgorithmRoute {
+    var ops: (OpRoute, OpRoute, OpRoute, OpRoute, OpRoute, OpRoute)
+    var norm: Float
+}
+
+/// DX7 algorithm routing table (32 algorithms, 0-indexed)
+/// Processing order is always op5→op4→op3→op2→op1→op0.
+/// Modulation sources reference operator indices whose output is already computed.
+private let kAlgorithmTable: [AlgorithmRoute] = {
+    // Helper to build an AlgorithmRoute from per-op specs
+    func alg(_ o0: OpRoute, _ o1: OpRoute, _ o2: OpRoute,
+             _ o3: OpRoute, _ o4: OpRoute, _ o5: OpRoute,
+             norm: Float) -> AlgorithmRoute {
+        AlgorithmRoute(ops: (o0, o1, o2, o3, o4, o5), norm: norm)
+    }
+    // c = carrier, m = modulator
+    func c(_ s0: Int8 = -1, _ s1: Int8 = -1, _ s2: Int8 = -1) -> OpRoute {
+        OpRoute(src0: s0, src1: s1, src2: s2, isCarrier: true)
+    }
+    func m(_ s0: Int8 = -1, _ s1: Int8 = -1, _ s2: Int8 = -1) -> OpRoute {
+        OpRoute(src0: s0, src1: s1, src2: s2, isCarrier: false)
+    }
+
+    return [
+        // Alg 1:  6->5->4->3 | 2->1     Carriers: 0,2
+        alg(c(1), m(), c(3), m(4), m(5), m(), norm: 0.707),
+        // Alg 2:  6->5->4->3 | 2->1     Carriers: 0,2  (same flow, different fb)
+        alg(c(1), m(), c(3), m(4), m(5), m(), norm: 0.707),
+        // Alg 3:  6->5->4 | 3->2->1     Carriers: 0,3
+        alg(c(1), m(2), m(), c(4), m(5), m(), norm: 0.707),
+        // Alg 4:  6->5->4 | 3->2->1     Carriers: 0,3  (same flow, cross-fb)
+        alg(c(1), m(2), m(), c(4), m(5), m(), norm: 0.707),
+        // Alg 5:  6->5 | 4->3 | 2->1    Carriers: 0,2,4
+        alg(c(1), m(), c(3), m(), c(5), m(), norm: 0.577),
+        // Alg 6:  6->5 | 4->3 | 2->1    Carriers: 0,2,4  (same flow, cross-fb)
+        alg(c(1), m(), c(3), m(), c(5), m(), norm: 0.577),
+        // Alg 7:  6->5, {5+4}->3 | 2->1  Carriers: 0,2
+        alg(c(1), m(), c(4, 3), m(), m(5), m(), norm: 0.707),
+        // Alg 8:  6->5, {5+4}->3 | 2->1  Carriers: 0,2  (same flow)
+        alg(c(1), m(), c(4, 3), m(), m(5), m(), norm: 0.707),
+        // Alg 9:  6->5, {5+4}->3 | 2->1  Carriers: 0,2  (same flow)
+        alg(c(1), m(), c(4, 3), m(), m(5), m(), norm: 0.707),
+        // Alg 10: {6+5}->4 | 3->2->1    Carriers: 0,3
+        alg(c(1), m(2), m(), c(5, 4), m(), m(), norm: 0.707),
+        // Alg 11: {6+5}->4 | 3->2->1    Carriers: 0,3  (same flow)
+        alg(c(1), m(2), m(), c(5, 4), m(), m(), norm: 0.707),
+        // Alg 12: {6+5+4}->3 | 2->1     Carriers: 0,2
+        alg(c(1), m(), c(5, 4, 3), m(), m(), m(), norm: 0.707),
+        // Alg 13: {6+5+4}->3 | 2->1     Carriers: 0,2  (same flow)
+        alg(c(1), m(), c(5, 4, 3), m(), m(), m(), norm: 0.707),
+        // Alg 14: {6+5}->4->3 | 2->1    Carriers: 0,2
+        alg(c(1), m(), c(3), m(5, 4), m(), m(), norm: 0.707),
+        // Alg 15: {6+5}->4->3 | 2->1    Carriers: 0,2  (same flow)
+        alg(c(1), m(), c(3), m(5, 4), m(), m(), norm: 0.707),
+        // Alg 16: 6->5, 4->3, {5+3+2}->1  Carriers: 0
+        alg(c(4, 2, 1), m(), m(3), m(), m(5), m(), norm: 1.0),
+        // Alg 17: 6->5, 4->3, {5+3+2}->1  Carriers: 0  (same flow)
+        alg(c(4, 2, 1), m(), m(3), m(), m(5), m(), norm: 1.0),
+        // Alg 18: 6->5->4, {4+3+2}->1   Carriers: 0
+        alg(c(3, 2, 1), m(), m(), m(4), m(5), m(), norm: 1.0),
+        // Alg 19: 6->{5,4} | 3->2->1    Carriers: 0,3,4
+        alg(c(1), m(2), m(), c(5), c(5), m(), norm: 0.577),
+        // Alg 20: {6+5}->4 | 3->{2,1}   Carriers: 0,1,3
+        alg(c(2), c(2), m(), c(5, 4), m(), m(), norm: 0.577),
+        // Alg 21: 6->{5,4} | 3->{2,1}   Carriers: 0,1,3,4
+        alg(c(2), c(2), m(), c(5), c(5), m(), norm: 0.5),
+        // Alg 22: 6->{5,4,3} | 2->1     Carriers: 0,2,3,4
+        alg(c(1), m(), c(5), c(5), c(5), m(), norm: 0.5),
+        // Alg 23: 6->{5,4} | 3->2 | 1   Carriers: 0,1,3,4
+        alg(c(), c(2), m(), c(5), c(5), m(), norm: 0.5),
+        // Alg 24: 6->{5,4,3} | 2 | 1    Carriers: 0,1,2,3,4
+        alg(c(), c(), c(5), c(5), c(5), m(), norm: 0.447),
+        // Alg 25: 6->{5,4} | 3 | 2 | 1  Carriers: 0,1,2,3,4
+        alg(c(), c(), c(), c(5), c(5), m(), norm: 0.447),
+        // Alg 26: {6+5}->4 | 3->2 | 1   Carriers: 0,1,3
+        alg(c(), c(2), m(), c(5, 4), m(), m(), norm: 0.577),
+        // Alg 27: {6+5}->4 | 3->2 | 1   Carriers: 0,1,3  (same flow)
+        alg(c(), c(2), m(), c(5, 4), m(), m(), norm: 0.577),
+        // Alg 28: 6 | 5->4->3 | 2->1    Carriers: 0,2,5
+        alg(c(1), m(), c(3), m(4), m(), c(), norm: 0.577),
+        // Alg 29: 6->5 | 4->3 | 2 | 1   Carriers: 0,1,2,4
+        alg(c(), c(), c(3), m(), c(5), m(), norm: 0.5),
+        // Alg 30: 6 | 5->4->3 | 2 | 1   Carriers: 0,1,2,5
+        alg(c(), c(), c(3), m(4), m(), c(), norm: 0.5),
+        // Alg 31: 6->5 | 4 | 3 | 2 | 1  Carriers: 0,1,2,3,4
+        alg(c(), c(), c(), c(), c(5), m(), norm: 0.447),
+        // Alg 32: 6 | 5 | 4 | 3 | 2 | 1 Carriers: all
+        alg(c(), c(), c(), c(), c(), c(), norm: 0.408),
+    ]
+}()
+
 // MARK: - Voice
 
-/// Single polyphonic voice — 6 operators stored as individual fields
+/// Single polyphonic voice — 6 operators with table-driven algorithm routing
 private struct Voice {
-    var op0 = FMOp(), op1 = FMOp(), op2 = FMOp()
-    var op3 = FMOp(), op4 = FMOp(), op5 = FMOp()
+    var ops = (FMOp(), FMOp(), FMOp(), FMOp(), FMOp(), FMOp())
     var note: UInt8 = 0
     var velScale: Float = 1.0
     var active = false
@@ -160,16 +261,20 @@ private struct Voice {
 
     mutating func checkActive() {
         if active {
-            if !(op0.isActive || op1.isActive || op2.isActive ||
-                 op3.isActive || op4.isActive || op5.isActive) {
+            if !(ops.0.isActive || ops.1.isActive || ops.2.isActive ||
+                 ops.3.isActive || ops.4.isActive || ops.5.isActive) {
                 active = false
             }
         }
     }
 
     mutating func setSampleRate(_ sr: Float) {
-        op0.setSampleRate(sr); op1.setSampleRate(sr); op2.setSampleRate(sr)
-        op3.setSampleRate(sr); op4.setSampleRate(sr); op5.setSampleRate(sr)
+        withOp(0) { $0.setSampleRate(sr) }
+        withOp(1) { $0.setSampleRate(sr) }
+        withOp(2) { $0.setSampleRate(sr) }
+        withOp(3) { $0.setSampleRate(sr) }
+        withOp(4) { $0.setSampleRate(sr) }
+        withOp(5) { $0.setSampleRate(sr) }
     }
 
     mutating func noteOn(_ n: UInt8, velocity: UInt8) {
@@ -177,498 +282,108 @@ private struct Voice {
         velScale = Float(velocity) / 127.0
         active = true
         let freq: Float = 440.0 * powf(2.0, (Float(n) - 69.0) / 12.0)
-        op0.noteOn(baseFreq: freq); op1.noteOn(baseFreq: freq); op2.noteOn(baseFreq: freq)
-        op3.noteOn(baseFreq: freq); op4.noteOn(baseFreq: freq); op5.noteOn(baseFreq: freq)
+        withOp(0) { $0.noteOn(baseFreq: freq) }
+        withOp(1) { $0.noteOn(baseFreq: freq) }
+        withOp(2) { $0.noteOn(baseFreq: freq) }
+        withOp(3) { $0.noteOn(baseFreq: freq) }
+        withOp(4) { $0.noteOn(baseFreq: freq) }
+        withOp(5) { $0.noteOn(baseFreq: freq) }
     }
 
     mutating func noteOff() {
-        op0.noteOff(); op1.noteOff(); op2.noteOff()
-        op3.noteOff(); op4.noteOff(); op5.noteOff()
+        withOp(0) { $0.noteOff() }
+        withOp(1) { $0.noteOff() }
+        withOp(2) { $0.noteOff() }
+        withOp(3) { $0.noteOff() }
+        withOp(4) { $0.noteOff() }
+        withOp(5) { $0.noteOff() }
     }
+
+    // MARK: - Table-driven process
 
     mutating func process() -> Float {
         guard active else { return 0 }
-        let out: Float
-        switch algorithm {
-        case 0:  out = alg1()
-        case 1:  out = alg2()
-        case 2:  out = alg3()
-        case 3:  out = alg4()
-        case 4:  out = alg5()
-        case 5:  out = alg6()
-        case 6:  out = alg7()
-        case 7:  out = alg8()
-        case 8:  out = alg9()
-        case 9:  out = alg10()
-        case 10: out = alg11()
-        case 11: out = alg12()
-        case 12: out = alg13()
-        case 13: out = alg14()
-        case 14: out = alg15()
-        case 15: out = alg16()
-        case 16: out = alg17()
-        case 17: out = alg18()
-        case 18: out = alg19()
-        case 19: out = alg20()
-        case 20: out = alg21()
-        case 21: out = alg22()
-        case 22: out = alg23()
-        case 23: out = alg24()
-        case 24: out = alg25()
-        case 25: out = alg26()
-        case 26: out = alg27()
-        case 27: out = alg28()
-        case 28: out = alg29()
-        case 29: out = alg30()
-        case 30: out = alg31()
-        case 31: out = alg32()
-        default: out = alg1()
-        }
-        return out * velScale
+        let route = kAlgorithmTable[algorithm]
+
+        // Outputs buffer — processed top-down (op5 first)
+        var out: (Float, Float, Float, Float, Float, Float) = (0, 0, 0, 0, 0, 0)
+
+        // Process op5 (index 5) — always first, can only have no sources
+        let r5 = route.ops.5
+        let mod5 = modSum(r5, out)
+        out.5 = ops.5.process(mod5)
+
+        // Process op4 (index 4)
+        let r4 = route.ops.4
+        let mod4 = modSum(r4, out)
+        out.4 = ops.4.process(mod4)
+
+        // Process op3 (index 3)
+        let r3 = route.ops.3
+        let mod3 = modSum(r3, out)
+        out.3 = ops.3.process(mod3)
+
+        // Process op2 (index 2)
+        let r2 = route.ops.2
+        let mod2 = modSum(r2, out)
+        out.2 = ops.2.process(mod2)
+
+        // Process op1 (index 1)
+        let r1 = route.ops.1
+        let mod1 = modSum(r1, out)
+        out.1 = ops.1.process(mod1)
+
+        // Process op0 (index 0)
+        let r0 = route.ops.0
+        let mod0 = modSum(r0, out)
+        out.0 = ops.0.process(mod0)
+
+        // Sum carriers
+        var sum: Float = 0
+        if route.ops.0.isCarrier { sum += out.0 }
+        if route.ops.1.isCarrier { sum += out.1 }
+        if route.ops.2.isCarrier { sum += out.2 }
+        if route.ops.3.isCarrier { sum += out.3 }
+        if route.ops.4.isCarrier { sum += out.4 }
+        if route.ops.5.isCarrier { sum += out.5 }
+
+        return sum * route.norm * velScale
     }
 
-    // ── DX7 Algorithm Implementations ──
-    // op0=Op1, op1=Op2, op2=Op3, op3=Op4, op4=Op5, op5=Op6
-    // Feedback is on the operator that has self-feedback in DX7.
-    // Carriers are summed; normalization = 1/sqrt(numCarriers).
-
-    // Algorithm 1: [6](fb)->5->4->3  |  2->1
-    // Carriers: Op1, Op3
-    private mutating func alg1() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let m4 = op3.process(m5)
-        let c3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
+    /// Sum modulation sources from already-computed operator outputs
+    @inline(__always)
+    private func modSum(_ r: OpRoute, _ out: (Float, Float, Float, Float, Float, Float)) -> Float {
+        var m: Float = 0
+        if r.src0 >= 0 { m += outAt(Int(r.src0), out) }
+        if r.src1 >= 0 { m += outAt(Int(r.src1), out) }
+        if r.src2 >= 0 { m += outAt(Int(r.src2), out) }
+        return m
     }
 
-    // Algorithm 2: 6->5->4->3  |  [2](fb)->1
-    // Carriers: Op1, Op3
-    private mutating func alg2() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let m4 = op3.process(m5)
-        let c3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
-    }
-
-    // Algorithm 3: [6](fb)->5->4  |  3->2->1
-    // Carriers: Op1, Op4
-    private mutating func alg3() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let c4 = op3.process(m5)
-        let m3 = op2.process()
-        let m2 = op1.process(m3)
-        let c1 = op0.process(m2)
-        return (c1 + c4) * 0.707
-    }
-
-    // Algorithm 4: [6](<-fb)->5->4(fb->6)  |  3->2->1
-    // Carriers: Op1, Op4  (Op4 feeds back to Op6)
-    // Note: cross-feedback — Op6 reads feedback from Op4's output
-    private mutating func alg4() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let c4 = op3.process(m5)
-        let m3 = op2.process()
-        let m2 = op1.process(m3)
-        let c1 = op0.process(m2)
-        return (c1 + c4) * 0.707
-    }
-
-    // Algorithm 5: [6](fb)->5  |  4->3  |  2->1
-    // Carriers: Op1, Op3, Op5
-    private mutating func alg5() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let m4 = op3.process()
-        let c3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3 + c5) * 0.577
-    }
-
-    // Algorithm 6: [6](<-fb)->5(fb->6)  |  4->3  |  2->1
-    // Carriers: Op1, Op3, Op5
-    // Note: cross-feedback — Op6 reads feedback from Op5's output
-    private mutating func alg6() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let m4 = op3.process()
-        let c3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3 + c5) * 0.577
-    }
-
-    // Algorithm 7: [6](fb)->5, {5+4}->3  |  2->1
-    // Carriers: Op1, Op3
-    private mutating func alg7() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let m4 = op3.process()
-        let c3 = op2.process(m5 + m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
-    }
-
-    // Algorithm 8: 6->5, {5+[4](fb)}->3  |  2->1
-    // Carriers: Op1, Op3
-    private mutating func alg8() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let m4 = op3.process()
-        let c3 = op2.process(m5 + m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
-    }
-
-    // Algorithm 9: 6->5, {5+4}->3  |  [2](fb)->1
-    // Carriers: Op1, Op3
-    private mutating func alg9() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let m4 = op3.process()
-        let c3 = op2.process(m5 + m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
-    }
-
-    // Algorithm 10: {6+5}->4  |  [3](fb)->2->1
-    // Carriers: Op1, Op4
-    private mutating func alg10() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let c4 = op3.process(m6 + m5)
-        let m3 = op2.process()
-        let m2 = op1.process(m3)
-        let c1 = op0.process(m2)
-        return (c1 + c4) * 0.707
-    }
-
-    // Algorithm 11: {[6](fb)+5}->4  |  3->2->1
-    // Carriers: Op1, Op4
-    private mutating func alg11() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let c4 = op3.process(m6 + m5)
-        let m3 = op2.process()
-        let m2 = op1.process(m3)
-        let c1 = op0.process(m2)
-        return (c1 + c4) * 0.707
-    }
-
-    // Algorithm 12: {6+5+4}->3  |  [2](fb)->1
-    // Carriers: Op1, Op3
-    private mutating func alg12() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let m4 = op3.process()
-        let c3 = op2.process(m6 + m5 + m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
-    }
-
-    // Algorithm 13: {[6](fb)+5+4}->3  |  2->1
-    // Carriers: Op1, Op3
-    private mutating func alg13() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let m4 = op3.process()
-        let c3 = op2.process(m6 + m5 + m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
-    }
-
-    // Algorithm 14: [6](fb)->5, {5+4}->3  |  2->1
-    // Same topology as 7 but Op5 feeds to Op4->Op3 chain differently:
-    // {[6](fb)+5}->4->3  |  2->1
-    // Carriers: Op1, Op3
-    private mutating func alg14() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let m4 = op3.process(m6 + m5)
-        let c3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
-    }
-
-    // Algorithm 15: {6+5}->4->3  |  [2](fb)->1
-    // Carriers: Op1, Op3
-    private mutating func alg15() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let m4 = op3.process(m6 + m5)
-        let c3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3) * 0.707
-    }
-
-    // Algorithm 16: [6](fb)->5, 4->3, {5+3+2}->1
-    // Carriers: Op1 only
-    private mutating func alg16() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let m4 = op3.process()
-        let m3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m5 + m3 + m2)
-        return c1
-    }
-
-    // Algorithm 17: 6->5, 4->3, {5+3+[2](fb)}->1
-    // Carriers: Op1 only
-    private mutating func alg17() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let m4 = op3.process()
-        let m3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m5 + m3 + m2)
-        return c1
-    }
-
-    // Algorithm 18: 6->5->4, {4+[3](fb)+2}->1
-    // Carriers: Op1 only
-    private mutating func alg18() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process(m6)
-        let m4 = op3.process(m5)
-        let m3 = op2.process()
-        let m2 = op1.process()
-        let c1 = op0.process(m4 + m3 + m2)
-        return c1
-    }
-
-    // Algorithm 19: [6](fb)->{5,4}  |  3->2->1
-    // Carriers: Op1, Op4, Op5
-    private mutating func alg19() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let c4 = op3.process(m6)
-        let m3 = op2.process()
-        let m2 = op1.process(m3)
-        let c1 = op0.process(m2)
-        return (c1 + c4 + c5) * 0.577
-    }
-
-    // Algorithm 20: {6+5}->4  |  [3](fb)->{2,1}
-    // Carriers: Op1, Op2, Op4
-    private mutating func alg20() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let c4 = op3.process(m6 + m5)
-        let m3 = op2.process()
-        let c2 = op1.process(m3)
-        let c1 = op0.process(m3)
-        return (c1 + c2 + c4) * 0.577
-    }
-
-    // Algorithm 21: 6->{5,4}  |  [3](fb)->{2,1}
-    // Carriers: Op1, Op2, Op4, Op5
-    private mutating func alg21() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let c4 = op3.process(m6)
-        let m3 = op2.process()
-        let c2 = op1.process(m3)
-        let c1 = op0.process(m3)
-        return (c1 + c2 + c4 + c5) * 0.5
-    }
-
-    // Algorithm 22: [6](fb)->{5,4,3}  |  2->1
-    // Carriers: Op1, Op3, Op4, Op5
-    private mutating func alg22() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let c4 = op3.process(m6)
-        let c3 = op2.process(m6)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3 + c4 + c5) * 0.5
-    }
-
-    // Algorithm 23: [6](fb)->{5,4}  |  3->2  |  1
-    // Carriers: Op1, Op2, Op4, Op5
-    private mutating func alg23() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let c4 = op3.process(m6)
-        let m3 = op2.process()
-        let c2 = op1.process(m3)
-        let c1 = op0.process()
-        return (c1 + c2 + c4 + c5) * 0.5
-    }
-
-    // Algorithm 24: [6](fb)->{5,4,3}  |  2  |  1
-    // Carriers: Op1, Op2, Op3, Op4, Op5
-    private mutating func alg24() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let c4 = op3.process(m6)
-        let c3 = op2.process(m6)
-        let c2 = op1.process()
-        let c1 = op0.process()
-        return (c1 + c2 + c3 + c4 + c5) * 0.447
-    }
-
-    // Algorithm 25: [6](fb)->{5,4}  |  3  |  2  |  1
-    // Carriers: Op1, Op2, Op3, Op4, Op5
-    private mutating func alg25() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let c4 = op3.process(m6)
-        let c3 = op2.process()
-        let c2 = op1.process()
-        let c1 = op0.process()
-        return (c1 + c2 + c3 + c4 + c5) * 0.447
-    }
-
-    // Algorithm 26: {[6](fb)+5}->4  |  3->2  |  1
-    // Carriers: Op1, Op2, Op4
-    private mutating func alg26() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let c4 = op3.process(m6 + m5)
-        let m3 = op2.process()
-        let c2 = op1.process(m3)
-        let c1 = op0.process()
-        return (c1 + c2 + c4) * 0.577
-    }
-
-    // Algorithm 27: {6+5}->4  |  [3](fb)->2  |  1
-    // Carriers: Op1, Op2, Op4
-    private mutating func alg27() -> Float {
-        let m6 = op5.process()
-        let m5 = op4.process()
-        let c4 = op3.process(m6 + m5)
-        let m3 = op2.process()
-        let c2 = op1.process(m3)
-        let c1 = op0.process()
-        return (c1 + c2 + c4) * 0.577
-    }
-
-    // Algorithm 28: 6  |  [5](fb)->4->3  |  2->1
-    // Carriers: Op1, Op3, Op6
-    private mutating func alg28() -> Float {
-        let c6 = op5.process()
-        let m5 = op4.process()
-        let m4 = op3.process(m5)
-        let c3 = op2.process(m4)
-        let m2 = op1.process()
-        let c1 = op0.process(m2)
-        return (c1 + c3 + c6) * 0.577
-    }
-
-    // Algorithm 29: [6](fb)->5  |  4->3  |  2  |  1
-    // Carriers: Op1, Op2, Op3, Op5
-    private mutating func alg29() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let m4 = op3.process()
-        let c3 = op2.process(m4)
-        let c2 = op1.process()
-        let c1 = op0.process()
-        return (c1 + c2 + c3 + c5) * 0.5
-    }
-
-    // Algorithm 30: 6  |  [5](fb)->4->3  |  2  |  1
-    // Carriers: Op1, Op2, Op3, Op6
-    private mutating func alg30() -> Float {
-        let c6 = op5.process()
-        let m5 = op4.process()
-        let m4 = op3.process(m5)
-        let c3 = op2.process(m4)
-        let c2 = op1.process()
-        let c1 = op0.process()
-        return (c1 + c2 + c3 + c6) * 0.5
-    }
-
-    // Algorithm 31: [6](fb)->5  |  4  |  3  |  2  |  1
-    // Carriers: Op1, Op2, Op3, Op4, Op5
-    private mutating func alg31() -> Float {
-        let m6 = op5.process()
-        let c5 = op4.process(m6)
-        let c4 = op3.process()
-        let c3 = op2.process()
-        let c2 = op1.process()
-        let c1 = op0.process()
-        return (c1 + c2 + c3 + c4 + c5) * 0.447
-    }
-
-    // Algorithm 32: [6](fb)  |  5  |  4  |  3  |  2  |  1
-    // All 6 carriers (pure additive)
-    private mutating func alg32() -> Float {
-        let c6 = op5.process()
-        let c5 = op4.process()
-        let c4 = op3.process()
-        let c3 = op2.process()
-        let c2 = op1.process()
-        let c1 = op0.process()
-        return (c1 + c2 + c3 + c4 + c5 + c6) * 0.408
-    }
-
-    // Per-operator access by index
-    mutating func setOpLevel(_ i: Int, _ v: Float) {
+    @inline(__always)
+    private func outAt(_ i: Int, _ out: (Float, Float, Float, Float, Float, Float)) -> Float {
         switch i {
-        case 0: op0.level = v; case 1: op1.level = v; case 2: op2.level = v
-        case 3: op3.level = v; case 4: op4.level = v; case 5: op5.level = v
-        default: break
+        case 0: return out.0
+        case 1: return out.1
+        case 2: return out.2
+        case 3: return out.3
+        case 4: return out.4
+        case 5: return out.5
+        default: return 0
         }
     }
-    mutating func setOpRatio(_ i: Int, _ v: Float) {
+
+    // MARK: - Indexed operator access
+
+    @inline(__always)
+    mutating func withOp(_ i: Int, _ body: (inout FMOp) -> Void) {
         switch i {
-        case 0: op0.ratio = v; case 1: op1.ratio = v; case 2: op2.ratio = v
-        case 3: op3.ratio = v; case 4: op4.ratio = v; case 5: op5.ratio = v
-        default: break
-        }
-    }
-    mutating func setOpDetune(_ i: Int, _ cents: Float) {
-        switch i {
-        case 0: op0.setDetuneCents(cents); case 1: op1.setDetuneCents(cents)
-        case 2: op2.setDetuneCents(cents); case 3: op3.setDetuneCents(cents)
-        case 4: op4.setDetuneCents(cents); case 5: op5.setDetuneCents(cents)
-        default: break
-        }
-    }
-    mutating func setOpFeedback(_ i: Int, _ v: Float) {
-        switch i {
-        case 0: op0.feedback = v; case 1: op1.feedback = v; case 2: op2.feedback = v
-        case 3: op3.feedback = v; case 4: op4.feedback = v; case 5: op5.feedback = v
-        default: break
-        }
-    }
-    mutating func setOpEGRates(_ i: Int, _ r1: Float, _ r2: Float, _ r3: Float, _ r4: Float) {
-        switch i {
-        case 0: op0.env.setRates(r1, r2, r3, r4)
-        case 1: op1.env.setRates(r1, r2, r3, r4)
-        case 2: op2.env.setRates(r1, r2, r3, r4)
-        case 3: op3.env.setRates(r1, r2, r3, r4)
-        case 4: op4.env.setRates(r1, r2, r3, r4)
-        case 5: op5.env.setRates(r1, r2, r3, r4)
-        default: break
-        }
-    }
-    mutating func setOpEGLevels(_ i: Int, _ l1: Float, _ l2: Float, _ l3: Float, _ l4: Float) {
-        switch i {
-        case 0: op0.env.setLevels(l1, l2, l3, l4)
-        case 1: op1.env.setLevels(l1, l2, l3, l4)
-        case 2: op2.env.setLevels(l1, l2, l3, l4)
-        case 3: op3.env.setLevels(l1, l2, l3, l4)
-        case 4: op4.env.setLevels(l1, l2, l3, l4)
-        case 5: op5.env.setLevels(l1, l2, l3, l4)
+        case 0: body(&ops.0)
+        case 1: body(&ops.1)
+        case 2: body(&ops.2)
+        case 3: body(&ops.3)
+        case 4: body(&ops.4)
+        case 5: body(&ops.5)
         default: break
         }
     }
@@ -716,37 +431,37 @@ final class FMSynthEngine: @unchecked Sendable {
     func setOperatorLevel(_ opIndex: Int, level: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
         lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].setOpLevel(opIndex, level) }
+        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.level = level } }
     }
 
     func setOperatorRatio(_ opIndex: Int, ratio: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
         lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].setOpRatio(opIndex, ratio) }
+        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.ratio = ratio } }
     }
 
     func setOperatorDetune(_ opIndex: Int, cents: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
         lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].setOpDetune(opIndex, cents) }
+        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.setDetuneCents(cents) } }
     }
 
     func setOperatorFeedback(_ opIndex: Int, feedback: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
         lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].setOpFeedback(opIndex, feedback) }
+        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.feedback = feedback } }
     }
 
     func setOperatorEGRates(_ opIndex: Int, r1: Float, r2: Float, r3: Float, r4: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
         lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].setOpEGRates(opIndex, r1, r2, r3, r4) }
+        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.env.setRates(r1, r2, r3, r4) } }
     }
 
     func setOperatorEGLevels(_ opIndex: Int, l1: Float, l2: Float, l3: Float, l4: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
         lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].setOpEGLevels(opIndex, l1, l2, l3, l4) }
+        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.env.setLevels(l1, l2, l3, l4) } }
     }
 
     // MARK: - Render (called from audio thread)

@@ -251,7 +251,8 @@ public final class MIDIInputManager {
     // MARK: - Event Handling
 
     /// Handle raw MIDI bytes received from CoreMIDITransport
-    private func handleReceivedData(_ data: [UInt8]) async {
+    /// Already on MainActor (class is @MainActor, called via await self.handleReceivedData)
+    private func handleReceivedData(_ data: [UInt8]) {
         // Process MIDI 1.0 byte stream (most common from CoreMIDI PacketList)
         var offset = 0
         while offset < data.count {
@@ -277,9 +278,9 @@ public final class MIDIInputManager {
                 debugLastEvent = "NoteOn ch=\(channel) n=\(note) v=\(velocity)"
                 if passesFilter {
                     if velocity == 0 {
-                        await MainActor.run { onNoteOff?(note) }
+                        onNoteOff?(note)
                     } else {
-                        await MainActor.run { onNoteOn?(note, velocity) }
+                        onNoteOn?(note, velocity)
                     }
                 }
                 offset += 3
@@ -288,7 +289,7 @@ public final class MIDIInputManager {
                 guard offset + 2 < data.count else { break }
                 let note = data[offset + 1]
                 if passesFilter {
-                    await MainActor.run { onNoteOff?(note) }
+                    onNoteOff?(note)
                 }
                 offset += 3
 
@@ -297,14 +298,12 @@ public final class MIDIInputManager {
                 let controller = data[offset + 1]
                 let value = data[offset + 2]
                 if passesFilter {
-                    await MainActor.run { onControlChange?(controller, value) }
+                    onControlChange?(controller, value)
 
                     // CC 123 = All Notes Off
                     if controller == 123 {
-                        await MainActor.run {
-                            for n: UInt8 in 0...127 {
-                                onNoteOff?(n)
-                            }
+                        for n: UInt8 in 0...127 {
+                            onNoteOff?(n)
                         }
                     }
                 }

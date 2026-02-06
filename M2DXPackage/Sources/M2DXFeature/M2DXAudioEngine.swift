@@ -25,22 +25,11 @@ public enum AudioEngineError: LocalizedError {
     }
 }
 
-// MARK: - Render State
-
-/// Shared state between main thread and render thread
-private final class RenderState: @unchecked Sendable {
-    private let lock = OSAllocatedUnfairLock(initialState: true)
-
-    var isRunning: Bool {
-        get { lock.withLock { $0 } }
-        set { lock.withLock { $0 = newValue } }
-    }
-}
 
 // MARK: - M2DX Audio Engine
 
-/// Standalone audio engine that drives a pure-Swift FM synth via AVAudioPlayerNode
-/// with double-buffered scheduling. No AUv3 dependency.
+/// Standalone audio engine that drives a pure-Swift FM synth via AVAudioSourceNode
+/// for minimal latency. CoreAudio render callback calls synth directly.
 @MainActor
 @Observable
 public final class M2DXAudioEngine {
@@ -48,13 +37,9 @@ public final class M2DXAudioEngine {
     // MARK: - Properties
 
     private var audioEngine: AVAudioEngine?
-    private var playerNode: AVAudioPlayerNode?
+    private var sourceNode: AVAudioSourceNode?
     private let synth = FMSynthEngine()
-    private var renderState: RenderState?
     private var configObservers: [any NSObjectProtocol] = []
-
-    /// Buffer configuration
-    private let bufferFrameCount: AVAudioFrameCount = 512
 
     /// Currently playing notes (for proper cleanup)
     private var activeNotes: Set<UInt8> = []
@@ -70,7 +55,7 @@ public final class M2DXAudioEngine {
     }
 
     /// Master volume (0-1)
-    public var masterVolume: Float = 0.7 {
+    public var masterVolume: Float = 0.8 {
         didSet {
             synth.setMasterVolume(masterVolume)
         }
@@ -121,18 +106,13 @@ public final class M2DXAudioEngine {
         }
         configObservers.removeAll()
 
-        // Stop render thread
-        renderState?.isRunning = false
-        renderState = nil
-
         // All notes off via the MIDI queue
         synth.midiQueue.enqueue(MIDIEvent(kind: .controlChange, data1: 123, data2: 0))
         activeNotes.removeAll()
 
-        playerNode?.stop()
         audioEngine?.stop()
 
-        if let node = playerNode {
+        if let node = sourceNode {
             audioEngine?.detach(node)
         }
 
@@ -144,7 +124,7 @@ public final class M2DXAudioEngine {
         }
         #endif
 
-        playerNode = nil
+        sourceNode = nil
         audioEngine = nil
         isRunning = false
     }
@@ -182,9 +162,6 @@ public final class M2DXAudioEngine {
             synth.setOperatorLevel(i, level: level)
         }
 
-        // Create player node
-        let player = AVAudioPlayerNode()
-
         // Use the standard deinterleaved format that AVAudioEngine expects
         guard let format = AVAudioFormat(
             standardFormatWithSampleRate: sampleRate,
@@ -197,40 +174,22 @@ public final class M2DXAudioEngine {
             )
         }
 
-        self.playerNode = player
+        // Create AVAudioSourceNode — render callback runs directly on CoreAudio's
+        // real-time thread, eliminating buffer scheduling latency entirely.
+        let synthRef = synth
+        let source = Self.makeSourceNode(synth: synthRef, format: format)
+
+        self.sourceNode = source
         self.audioEngine = engine
 
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        engine.attach(source)
+        engine.connect(source, to: engine.mainMixerNode, format: format)
 
         do {
             try engine.start()
         } catch {
             throw AudioEngineError.engineStartFailed(underlying: error)
         }
-
-        // Start playback
-        player.play()
-
-        // Start render thread for continuous buffer scheduling
-        let state = RenderState()
-        self.renderState = state
-
-        let synthRef = synth
-        let frameCount = bufferFrameCount
-
-        let thread = Thread {
-            Self.renderLoop(
-                synth: synthRef,
-                player: player,
-                format: format,
-                frameCount: frameCount,
-                state: state
-            )
-        }
-        thread.name = "M2DX-Render"
-        thread.qualityOfService = .userInteractive
-        thread.start()
 
         // Monitor audio configuration changes (output device switch on macOS, route change on iOS)
         configObservers.append(NotificationCenter.default.addObserver(
@@ -407,50 +366,31 @@ public final class M2DXAudioEngine {
     }
     #endif
 
-    // MARK: - Render Loop (runs on dedicated thread)
+    // MARK: - Source Node Factory
 
-    nonisolated private static func renderLoop(
+    /// Create AVAudioSourceNode outside @MainActor to avoid Sendable closure issues
+    nonisolated private static func makeSourceNode(
         synth: FMSynthEngine,
-        player: AVAudioPlayerNode,
-        format: AVAudioFormat,
-        frameCount: AVAudioFrameCount,
-        state: RenderState
-    ) {
-        while state.isRunning {
-            guard player.isPlaying else {
-                Thread.sleep(forTimeInterval: 0.001)
-                continue
+        format: AVAudioFormat
+    ) -> AVAudioSourceNode {
+        AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
+            let ablPointer = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            guard ablPointer.count >= 2,
+                  let leftBuffer = ablPointer[0].mData?.assumingMemoryBound(to: Float.self),
+                  let rightBuffer = ablPointer[1].mData?.assumingMemoryBound(to: Float.self) else {
+                return noErr
             }
 
-            guard let buffer = AVAudioPCMBuffer(
-                pcmFormat: format,
-                frameCapacity: frameCount
-            ) else { continue }
-
-            buffer.frameLength = frameCount
-
-            // Render into deinterleaved buffers
-            guard let floatChannelData = buffer.floatChannelData else { continue }
-            let leftChannel = floatChannelData[0]
-            let rightChannel = floatChannelData[1]
+            let frames = Int(frameCount)
 
             // Zero buffers
-            memset(leftChannel, 0, Int(frameCount) * MemoryLayout<Float>.size)
-            memset(rightChannel, 0, Int(frameCount) * MemoryLayout<Float>.size)
+            memset(leftBuffer, 0, frames * MemoryLayout<Float>.size)
+            memset(rightBuffer, 0, frames * MemoryLayout<Float>.size)
 
-            // Render synth
-            synth.render(
-                into: leftChannel,
-                bufferR: rightChannel,
-                frameCount: Int(frameCount)
-            )
+            // Render synth directly into CoreAudio buffers
+            synth.render(into: leftBuffer, bufferR: rightBuffer, frameCount: frames)
 
-            // Schedule buffer and wait for completion
-            let semaphore = DispatchSemaphore(value: 0)
-            player.scheduleBuffer(buffer) {
-                semaphore.signal()
-            }
-            semaphore.wait()
+            return noErr
         }
     }
 

@@ -1445,3 +1445,224 @@
 決定事項: 対数レベルカーブ修正は成功、音割れ問題解消
 次のTODO: 次の指示待ち
 ---
+
+---
+2026-02-06 17:16
+作業項目: MIDI-CI Property Exchange (PE) ProgramList 返却機能の実装
+追加機能の説明:
+- MIDIInputManager.swift に PEResponder を統合
+- CI SysEx (F0 7E ... 0D ...) を判別しPEResponderに転送
+- ResourceList, DeviceInfo, ProgramList の3リソースを登録
+- ProgramList は DX7FactoryPresets から動的生成
+- 通常MIDI (Note/CC等) は既存処理を継続
+対象ファイル:
+- M2DXPackage/Sources/M2DXFeature/MIDIInputManager.swift (変更)
+決定事項: PEResponder.start()は呼ばず、handleMessage()を手動呼び出し（received stream競合回避）
+次のTODO: MIDI2Kit PE APIの実際のシグネチャ確認 → 実装 → ビルド
+---
+
+---
+2026-02-06 17:21
+作業項目: PE ProgramList実装完了・ビルド成功
+追加機能の説明:
+- MIDIInputManager.swift に以下の変更を実施:
+  1. `import M2DXCore` 追加（DX7FactoryPresets参照用）
+  2. `peResponder: PEResponder?` プロパティ追加
+  3. `start()`: PEResponder作成、MUID.random()でMUID生成、registerPEResources()呼び出し
+  4. 受信ループ: CI SysEx判別 (F0 7E xx 0D) → PEResponder.handleMessage()転送、それ以外→既存handleReceivedData
+  5. `stop()`: peResponder = nil 追加
+  6. `registerPEResources()`: ResourceList(StaticResource), DeviceInfo(StaticResource), ProgramList(ComputedResource) を登録
+  7. ProgramList: DX7FactoryPresets.all から PEProgramDef を動的生成、JSONEncoder でエンコード
+- iOS実機ビルド: BUILD SUCCEEDED
+- macOSビルド: BUILD SUCCEEDED
+決定事項:
+- PEResponder.start()は呼ばない（received streamの単一消費者制約のため手動handleMessage方式）
+- Package.swift変更不要（MIDI2Kit依存は既存、MIDI2PEは@_exportedで自動公開）
+次のTODO:
+- 実機での動作確認（MIDI入力が引き続き正常動作すること）
+- 外部MIDI-CI対応機器からのPE GET ProgramListテスト
+---
+
+---
+2026-02-06 17:26
+作業項目: 同一iPhone端末内からのMIDI 2.0通信可否の調査
+追加機能の説明:
+- CoreMIDITransport のソースコード全体を調査
+- setupCoreMIDI(): MIDIClientCreate + MIDIOutputPortCreate + MIDIInputPortCreateWithBlock のみ
+- MIDIDestinationCreate / MIDISourceCreate の呼び出しなし → 仮想ポート未作成
+- received AsyncStream は MIDIPortConnectSource() で接続した外部ソースからのみ受信
+- send() は既存の外部 destination に直接 MIDISend()
+- LoopbackTransport は同一プロセス内のテスト用（他アプリからはアクセス不可）
+決定事項:
+- 現状のCoreMIDITransportでは同一端末内の他アプリからのMIDI通信は不可
+- 仮想ポート公開にはMIDIDestinationCreate/MIDISourceCreateの追加実装が必要
+次のTODO: ユーザーに調査結果を報告
+---
+
+---
+2026-02-06 17:31
+作業項目: MIDI2Kit 仮想ポート機能 提案文書作成
+追加機能の説明:
+- CoreMIDITransport / MIDITransport プロトコルの全公開APIを調査
+- 仮想ポート（Virtual Endpoint）機能の提案文書を作成
+- MIDITransportプロトコルへの拡張、CoreMIDITransportへの実装、PEResponder連携を提案
+決定事項: 提案文書をdocs/に作成
+次のTODO: 提案文書をまとめて報告
+---
+
+---
+2026-02-06 17:34
+作業項目: MIDI2Kit GitHub Issue 作成（仮想ポート機能提案）
+追加機能の説明:
+- hakaru/MIDI2Kit リポジトリに Feature Request Issue を作成
+- docs/MIDI2Kit-VirtualEndpoint-Proposal.md の内容をIssueとして投稿
+決定事項: gh issue create で作成
+次のTODO: Issue作成・URL報告
+---
+
+---
+2026-02-06 17:53
+作業項目: KeyStage USB MIDI入力が反応しない問題の調査
+追加機能の説明:
+- iPhoneとArturia KeyStageをUSB接続
+- 音声はKeyStageのオーディオインターフェース経由で出力OK
+- KeyStageのMIDI入力が反応しない
+- 原因調査: MIDIInputManager / CoreMIDITransport の受信処理をデバッグ
+決定事項: デバッグログを追加して原因特定
+次のTODO: MIDIInputManagerにログ追加、受信ループの状態確認
+---
+
+---
+2026-02-06 17:59
+作業項目: アプリUI上にMIDIデバッグオーバーレイを追加
+追加機能の説明:
+- コンソールログ確認が困難なため、アプリUI上にMIDIデバッグ情報を表示
+- MIDIInputManagerにデバッグ用プロパティ追加（検出ソース一覧、最終受信データ、受信カウント）
+- M2DXFeatureにデバッグオーバーレイ表示
+決定事項: UI上でデバッグ情報を確認できるようにする
+次のTODO: 実装→ビルド
+---
+
+---
+2026-02-06 18:14
+作業項目: KeyStage MIDI入力問題の原因特定
+追加機能の説明:
+- 実機デバッグUIの結果:
+  - Sources: Session 1, KBD/CTRL, DAW IN, Bluetooth → 4ソース検出OK
+  - Connected: 4 → 接続成功
+  - Received msgs: 0 → データ受信ゼロ
+- 原因特定: CoreMIDITransport.swift 行228で `MIDIInputPortCreateWithBlock` を使用
+  - これは MIDI 1.0 PacketList ベースの旧API
+  - Arturia KeyStage は MIDI 2.0 対応デバイス
+  - iOS 16+では MIDI 2.0 デバイスとの通信時に MIDIEventList (UMP) を使用
+  - `MIDIInputPortCreateWithBlock` のコールバックは MIDIEventList データでは呼ばれない
+- 修正方法: `MIDIInputPortCreateWithProtocol(_:_:_:_:_:)` (iOS 16+) に変更が必要
+  - MIDIProtocolID._1_0 を指定すれば MIDI 1.0 形式で受信可能
+  - または ._2_0 を指定して UMP を直接処理
+決定事項: MIDI2Kit の CoreMIDITransport を MIDIInputPortCreateWithProtocol に修正
+次のTODO: CoreMIDITransport.swift の入力ポート作成を修正
+---
+
+---
+2026-02-06 18:16
+作業項目: CoreMIDITransport MIDI 2.0対応修正・実機インストール
+追加機能の説明:
+- CoreMIDITransport.swift を修正:
+  1. `MIDIInputPortCreateWithBlock` → `MIDIInputPortCreateWithProtocol(._1_0)` に変更
+  2. `handleEventList()` メソッド追加: MIDIEventList から UMP ワードを抽出
+  3. UMP Message Type 0x2 (MIDI 1.0 Channel Voice) → MIDI 1.0 バイトに変換
+  4. UMP Message Type 0x1 (System Real-Time/Common) も処理
+  5. 変換後のバイトを既存の processReceivedData() → receivedContinuation に渡す
+- iOS実機ビルド成功・インストール完了 (Midi / iPhone 14 Pro Max)
+決定事項: ._1_0 プロトコルを指定し、CoreMIDIにMIDI 1.0変換を任せつつ、UMPからバイト抽出
+次のTODO: ユーザーにKeyStage接続状態で動作確認を依頼
+---
+
+---
+2026-02-06 18:21
+作業項目: CoreMIDIコールバックレベルのデバッグ追加・実機インストール
+追加機能の説明:
+- CoreMIDITransport.swift にデバッグカウンター追加:
+  - debugCallbackCount: コールバック呼び出し回数
+  - debugWordCount: UMPワード処理数
+  - debugLastCallback: 最終コールバック情報
+- MIDIInputManager.debugTransportCallback: transport のカウンターをUI表示
+- SettingsView MIDI Debug セクションに「Transport callback」行追加
+- 実機インストール完了
+- 切り分け: cb=0なら→コールバック未到達（CoreMIDI接続問題）、cb>0なら→UMPパース問題
+決定事項: コールバックレベルで切り分け
+次のTODO: ユーザーにKeyStageで鍵盤を弾いてもらい結果確認
+---
+
+---
+2026-02-06 18:30
+作業項目: UMPワードデバッグ情報追加・実機インストール
+追加機能の説明:
+- CoreMIDITransport.swift handleEventList()に`debugLastWord`設定コード追加
+  - `String(format: "0x%08X mt=%d wc=%d", word, messageType, wordCount)` で生のUMPワード値を記録
+- MIDIInputManager.debugTransportCallback: debugLastWord情報を追加表示
+- SettingsView: lineLimit 3→5に拡張（2行表示に対応）
+- 前回の問題: cb=187, words=187 だが Received msgs=0
+  - UMPのmessageType (bits 28-31) が 0x1/0x2/0x3 のいずれにもマッチしていない
+  - debugLastWord で実際のUMPワード値・messageTypeを確認する必要がある
+- iOS実機ビルド成功（BUILD SUCCEEDED）
+- 実機インストール・起動成功
+決定事項: UMPワード生値の可視化で問題の根本原因を特定する
+次のTODO: ユーザーにKeyStageで鍵盤を弾いてもらい、Settings→MIDI DebugでTransport callbackのword=行を確認
+---
+
+---
+2026-02-06 18:34
+作業項目: MIDI受信できない根本原因を特定・修正
+追加機能の説明:
+- スクリーンショットの結果: word=0x10F80000 mt=1 wc=1
+  - 0x10F80000 = UMP Message Type 1 (System Real-Time), Status 0xF8 (Timing Clock)
+  - mt=1 は switch case 0x1 にマッチしている → UMPパース自体は正しく動作
+  - KeyStageはMIDI Timing Clockを常時送信中
+- 根本原因特定: SysExAssembler.process() が非SysExデータを全て破棄していた
+  - processReceivedData() → sysExAssembler.process(data) を経由
+  - SysExAssembler の Case 3: 先頭が0xF0でなく、バッファも空の場合
+    → SysEx Startを探し、見つからなければ break → 空配列を返す
+  - つまり [0xF8] (Timing Clock) や [0x90, 0x3C, 0x7F] (Note On) は全て捨てられていた
+  - これが Received msgs=0 の真の原因
+- 修正: processReceivedData() を改修
+  - 先頭が 0xF0 または SysExバッファにデータがある場合のみ SysExAssembler 経由
+  - それ以外の通常MIDIデータは SysExAssembler をバイパスして直接 receivedContinuation.yield()
+- ビルドエラー修正: `||` 右辺の `await` は autoclosure で使えない → 事前に let で評価
+- iOS実機ビルド成功・インストール・起動成功
+決定事項: SysExAssemblerは元々SysEx専用だが、processReceivedDataが全データを通していたのがバグ
+次のTODO: KeyStageで鍵盤を弾いてReceived msgsが増えることを確認
+---
+
+---
+2026-02-06 18:37
+作業項目: KeyStage USB MIDI入力 動作確認成功
+追加機能の説明:
+- ユーザーがKeyStageで鍵盤を弾き、M2DXから音が出ることを確認
+- SysExAssemblerバイパス修正により、通常MIDIメッセージが正しくreceivedストリームに到達
+- MIDI2Kit CoreMIDITransport のバグ修正（processReceivedDataでの非SysExデータ破棄問題）
+決定事項: KeyStage USB MIDI入力問題は完全解決
+次のTODO:
+- MIDI2Kit側の修正をコミット（バグ修正）
+- M2DXのデバッグUI（MIDI Debug セクション）は残すか削除するか検討
+- 全変更のコミット
+---
+
+---
+2026-02-06 18:39
+作業項目: iOS版の音割れ（レベルオーバー）問題修正
+追加機能の説明:
+- 問題: MAC版に比べてiOS版の音が悪すぎる（レベルオーバー/クリッピング）
+- 原因: FMSynthEngine.render()の最終出力にクリッピング処理がなかった
+  - FM合成の出力は容易に±1.0を超える
+  - macOSはオーディオドライバ側でソフトリミッティングが効くが、iOSではそのまま出力
+  - デジタルクリッピング → 激しい歪み
+- 修正: ソフトクリッピング（tanh近似）を追加
+  - tanhApprox(): Padé近似による高速tanh計算
+  - `@inline(__always)` でオーディオスレッドのオーバーヘッドを最小化
+  - ±1.0範囲内のサンプルはバイパス（不要な計算回避）
+  - ±1.0超過時のみtanh近似でソフトクリップ
+- iOS実機ビルド成功・インストール・起動成功
+決定事項: ソフトクリッピングでデジタル歪みを防止
+次のTODO: ユーザーに音質改善を確認してもらう
+---
