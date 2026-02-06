@@ -71,6 +71,13 @@ public struct M2DXRootView: View {
             midiInput.onPitchBend = { value32 in
                 audioEngine.pitchBend(value32)
             }
+            midiInput.onProgramChange = { program in
+                let presets = DX7FactoryPresets.all
+                guard Int(program) < presets.count else { return }
+                let preset = presets[Int(program)]
+                applyPreset(preset)
+                selectedPreset = preset
+            }
             midiInput.start()
 
             while !Task.isCancelled {

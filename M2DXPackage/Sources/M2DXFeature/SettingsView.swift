@@ -294,6 +294,27 @@ struct SettingsView: View {
                     .lineLimit(5)
             }
 
+            // MIDI Message Log
+            DisclosureGroup("Message Log (\(midiInput.debugLog.count))") {
+                if midiInput.debugLog.isEmpty {
+                    Text("(no messages)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(Array(midiInput.debugLog.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(size: 9, design: .monospaced))
+                                .lineLimit(2)
+                        }
+                    }
+                }
+                Button("Clear Log") {
+                    midiInput.clearDebugLog()
+                }
+                .font(.caption)
+            }
+
             Button {
                 midiInput.stop()
                 midiInput.start()

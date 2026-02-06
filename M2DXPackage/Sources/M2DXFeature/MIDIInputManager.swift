@@ -68,6 +68,9 @@ public final class MIDIInputManager {
     /// Callback for pitch bend events (value32, center=0x80000000)
     public var onPitchBend: ((UInt32) -> Void)?
 
+    /// Callback for program change events (program number 0-127)
+    public var onProgramChange: ((UInt8) -> Void)?
+
     // MARK: - Debug Info (visible on UI)
 
     /// Debug: detected MIDI source names at connect time
@@ -84,6 +87,23 @@ public final class MIDIInputManager {
 
     /// Debug: last parsed event description
     public private(set) var debugLastEvent: String = "(none)"
+
+    /// Debug: recent MIDI message log (newest first, max 50)
+    public private(set) var debugLog: [String] = []
+    private let debugLogMax = 50
+
+    /// Append a line to the debug log buffer
+    private func appendDebugLog(_ line: String) {
+        debugLog.insert(line, at: 0)
+        if debugLog.count > debugLogMax {
+            debugLog.removeLast()
+        }
+    }
+
+    /// Clear the debug log
+    public func clearDebugLog() {
+        debugLog.removeAll()
+    }
 
     /// Debug: CoreMIDI callback count (from transport)
     public var debugTransportCallback: String {
@@ -141,9 +161,17 @@ public final class MIDIInputManager {
                     let data = received.data
                     let hex = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
 
+                    let w1 = received.umpWord1
+                    let w2 = received.umpWord2
+                    let umpStr = w1 != 0
+                        ? String(format: "UMP 0x%08X 0x%08X mt=%d st=%d", w1, w2, (w1 >> 28) & 0xF, (w1 >> 20) & 0xF)
+                        : "M1"
+                    let logLine = "\(umpStr) [\(hex)]"
+
                     await MainActor.run {
                         self.debugReceiveCount += 1
-                        self.debugLastReceived = "\(data.count)B: \(hex)\(data.count > 16 ? "..." : "")"
+                        self.debugLastReceived = "\(data.count)B: \(hex)"
+                        self.appendDebugLog(logLine)
                     }
 
                     // CI SysEx: F0 7E <deviceID> 0D <sub-ID2> ...
@@ -303,6 +331,13 @@ public final class MIDIInputManager {
                 onPitchBend?(val32)
             }
 
+        case 0xC: // Program Change (program at bits 31-24 of word2)
+            let program = UInt8((word2 >> 24) & 0x7F)
+            debugLastEvent = "PC(UMP) ch=\(channel) p=\(program)"
+            if passesFilter {
+                onProgramChange?(program)
+            }
+
         default:
             // For unhandled UMP types, fall back to MIDI 1.0 byte parsing
             handleReceivedData(fallbackData)
@@ -385,7 +420,16 @@ public final class MIDIInputManager {
                 }
                 offset += 3
 
-            case 0xC, 0xD: // Program Change, Channel Pressure
+            case 0xC: // Program Change
+                guard offset + 1 < data.count else { break }
+                let program = data[offset + 1]
+                debugLastEvent = "PC ch=\(channel) p=\(program)"
+                if passesFilter {
+                    onProgramChange?(program)
+                }
+                offset += 2
+
+            case 0xD: // Channel Pressure
                 offset += 2
 
             case 0xF: // System messages

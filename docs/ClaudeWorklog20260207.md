@@ -665,3 +665,73 @@
 決定事項: docs/TODO.md にTODOを管理する
 次のTODO: なし
 ---
+
+---
+2026-02-07 07:39
+作業項目: Program Change でプリセット切り替え機能の実装
+追加機能の説明:
+- MIDIInputManager: onProgramChange コールバック追加（UMP/MIDI 1.0 両対応）
+- M2DXFeature: Program Change 受信時に DX7FactoryPresets.all[program] をロード + UI同期
+- 対象プリセット: DX7FactoryPresets.all（10個、index 0-9）
+決定事項: Program Change で即座にプリセット切り替え
+次のTODO: 実装・ビルド・実機テスト
+---
+
+---
+2026-02-07 07:42
+作業項目: Program Change でプリセット切り替え — 実装完了
+追加機能の説明:
+- MIDIInputManager:
+  - onProgramChange: ((UInt8) -> Void)? コールバック追加
+  - handleUMPData: case 0xC で Program Change デコード（word2 >> 8 & 0x7F）
+  - handleReceivedData: MIDI 1.0 の 0xC を分離処理（data[offset+1] = program）
+- M2DXFeature:
+  - onProgramChange コールバック接続
+  - DX7FactoryPresets.all[program] でプリセットロード + UI同期（applyPreset + selectedPreset更新）
+  - プリセット数(10)を超えるprogram番号はガード
+- iOS実機ビルド成功・インストール・起動成功
+決定事項: Program Change 0-9 で DX7ファクトリープリセット切り替え可能
+次のTODO: ユーザーにKeyStageからProgram Change送信で動作確認を依頼
+---
+
+---
+2026-02-07 07:58
+作業項目: MIDIデバッグログ改善 — メッセージ履歴バッファ追加
+追加機能の説明:
+- MIDIInputManager: debugLog配列（最新50件、先頭が最新）+ appendDebugLog/clearDebugLog
+- 各受信メッセージにUMP情報（mt=, st=, ワード値）またはM1タグを付与してログ
+- SettingsView: MIDI Debug セクションに DisclosureGroup "Message Log" 追加
+  - 直近50件のMIDIメッセージを9ptモノスペースで表示
+  - Clear Logボタン付き
+- Program Change問題のデバッグ用
+決定事項: デバッグUI改善で受信MIDIメッセージを履歴として確認可能に
+次のTODO: ユーザーにKeyStageからPC送信→Settings画面のMessage Logを確認してもらう
+---
+
+---
+2026-02-07 08:04
+作業項目: Program Change修正結果の報告（前セッションからの継続）
+追加機能の説明:
+- 前セッションで以下の修正を完了していた:
+  - UMP Program Change のビット抽出修正: (word2 >> 8) & 0x7F → (word2 >> 24) & 0x7F
+  - CoreMIDITransport.swift と MIDIInputManager.swift の両方を修正
+- コンソールログキャプチャ(60秒)の結果:
+  - Program 0-9: 正しくプリセットロード確認
+    - 0=INIT VOICE, 1=E.PIANO 1, 2=BASS 1, 3=BRASS 1, 4=STRINGS 1
+    - 5=E.ORGAN 1, 6=MARIMBA, 7=HARPSICH 1, 8=FLUTE 1, 9=CLAV 1
+  - Program 10+: 正しく範囲外として拒否
+  - KeyStageはエンコーダー式に連続的にPC送信する動作を確認
+- デバッグprint文が残存（[PC], [MIDI-RX]等）→ クリーンアップ必要
+決定事項: Program Change機能は正常動作確認済み
+次のTODO: デバッグprint文のクリーンアップ、コミット
+---
+
+---
+2026-02-07 08:07
+作業項目: Program Change機能 + デバッグログ改善 コミット・プッシュ
+追加機能の説明:
+- M2DX: Program Change対応、デバッグログバッファ(50件)、debug print削除
+- MIDI2Kit: PC ビット抽出修正 (word2>>8 → word2>>24)、SysEx7 Data 64機能追加
+決定事項: 両リポジトリをコミット・プッシュ
+次のTODO: なし
+---
