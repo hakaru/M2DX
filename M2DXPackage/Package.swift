@@ -6,7 +6,8 @@ import PackageDescription
 let package = Package(
     name: "M2DXPackage",
     platforms: [
-        .iOS(.v18)
+        .iOS(.v18),
+        .macOS(.v14)
     ],
     products: [
         .library(
@@ -44,6 +45,7 @@ let package = Package(
             name: "M2DXFeature",
             dependencies: [
                 "M2DXCore",
+                .product(name: "MIDIKit", package: "MIDIKit"),
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6),

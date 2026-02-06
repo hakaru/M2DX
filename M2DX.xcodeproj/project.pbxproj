@@ -7,17 +7,22 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		07A0CA5F83FD3522B345A191 /* PropertyExchangeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 978572B95AD117A0D44F96F4 /* PropertyExchangeTests.swift */; };
 		0FDD31ED09AC40C434B92BA1 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6E812659DCDCDAEFD56E996D /* AudioToolbox.framework */; };
 		158DA7CCB52CDD349FE57DCC /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = F564538FAF402344F126263A /* LaunchScreen.storyboard */; };
 		159F225072B7723F59AD7E12 /* M2DXKernelBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5EEE7F4254A8511F6DF1B4AC /* M2DXKernelBridge.mm */; };
+		1A348FD0939E7FD52D7B3429 /* M2DXFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 48123359DC266099B45806F4 /* M2DXFeature */; };
 		3A8C37B3671178B3BF7E71BD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EB3C824AC7C7B60EAA750BB8 /* Assets.xcassets */; };
 		6128FA024709BD89DAF1FA89 /* M2DXFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 74AB387C74AD68393AAA701B /* M2DXFeature */; };
 		6A0ADC4EAD13E248E4DACB56 /* CoreAudioKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 058B3FFD7FBBF96B98D37FD8 /* CoreAudioKit.framework */; };
+		6AC81ACAA4016669F28041B6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D3C705343FF497EAFB041AEE /* Assets.xcassets */; };
 		7CBAEA48BB53BD80BE28DE62 /* M2DXFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 6A803FFD6F0A73777A2F2BB3 /* M2DXFeature */; };
+		7EBEB19D910FB58A34B7E5F5 /* M2DXMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0AFF6BFD18BEC300776260 /* M2DXMacApp.swift */; };
 		85177778CA23939D0ED2C7BC /* M2DXAudioUnitViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC8FAACD006574933AD44079 /* M2DXAudioUnitViewController.swift */; };
 		903D46F2D82E1BB9AEACF831 /* M2DXAudioUnit.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9D367F6DB2128EB4B3A3A234 /* M2DXAudioUnit.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		ACB1A330F96EE3E505FCA778 /* M2DXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 705DB916C0FCA368463B0F92 /* M2DXCore */; };
 		ACE62CDFB890C061CF50BEC3 /* M2DXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 02918B762427305731779201 /* M2DXCore */; };
+		B7F8F6FEC2A8C196D7D9BA47 /* M2DXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 346192A1BCAFAB937E3FBE67 /* M2DXCore */; };
 		D44399AEA27876D01F51623D /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 310FE653812783F9AF59DB8F /* AVFoundation.framework */; };
 		D526E358FCA4B4CFED4BEDC1 /* M2DXAudioUnit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0E8EDDFFFF9837202447A6 /* M2DXAudioUnit.swift */; };
 		D582C0CE0F8E22312E4C1B5F /* M2DXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7A706925AB6589B0896696C7 /* M2DXCore */; };
@@ -64,6 +69,7 @@
 		12754DAEDA869065456851EB /* M2DXKernel.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = M2DXKernel.hpp; sourceTree = "<group>"; };
 		310FE653812783F9AF59DB8F /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		3547A000FEC39C9AA7A6D260 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		3D0AFF6BFD18BEC300776260 /* M2DXMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXMacApp.swift; sourceTree = "<group>"; };
 		4D4DFD55DD6E8A6B82E0D7B5 /* M2DXCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXCoreTests.swift; sourceTree = "<group>"; };
 		538255B8E722EA5A54AFBE44 /* M2DXKernelBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = M2DXKernelBridge.h; sourceTree = "<group>"; };
 		5D0E8EDDFFFF9837202447A6 /* M2DXAudioUnit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXAudioUnit.swift; sourceTree = "<group>"; };
@@ -74,9 +80,12 @@
 		7042338D950B9390F98B2476 /* DX7Constants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DX7Constants.hpp; sourceTree = "<group>"; };
 		7321AB547DB4DC80F83F6B9A /* M2DXParameterAddresses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXParameterAddresses.swift; sourceTree = "<group>"; };
 		8B189605F2A6C65052E33025 /* M2DX.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = M2DX.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		978572B95AD117A0D44F96F4 /* PropertyExchangeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyExchangeTests.swift; sourceTree = "<group>"; };
 		9D367F6DB2128EB4B3A3A234 /* M2DXAudioUnit.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = M2DXAudioUnit.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9DEAD5BA62B2BEC4CCE02E3A /* M2DXMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = M2DXMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9EFEA1AE5D263785D4B4E39E /* M2DXFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXFeatureTests.swift; sourceTree = "<group>"; };
 		B7BB4F1D5AB45BC0746E275C /* M2DXTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = M2DXTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D3C705343FF497EAFB041AEE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D4085D0039BC9155C290D662 /* M2DXAudioUnit-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "M2DXAudioUnit-Bridging-Header.h"; sourceTree = "<group>"; };
 		DC8FAACD006574933AD44079 /* M2DXAudioUnitViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXAudioUnitViewController.swift; sourceTree = "<group>"; };
 		DE24918DA714B8EEE518F141 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -112,6 +121,15 @@
 			files = (
 				6128FA024709BD89DAF1FA89 /* M2DXFeature in Frameworks */,
 				ACB1A330F96EE3E505FCA778 /* M2DXCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A353779EF5993F51F3E3D562 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A348FD0939E7FD52D7B3429 /* M2DXFeature in Frameworks */,
+				B7F8F6FEC2A8C196D7D9BA47 /* M2DXCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -153,6 +171,7 @@
 			isa = PBXGroup;
 			children = (
 				4D4DFD55DD6E8A6B82E0D7B5 /* M2DXCoreTests.swift */,
+				978572B95AD117A0D44F96F4 /* PropertyExchangeTests.swift */,
 			);
 			name = M2DXCoreTests;
 			path = M2DXPackage/Tests/M2DXCoreTests;
@@ -185,6 +204,7 @@
 				2FD691B07D5FE55F3F95D897 /* M2DXAudioUnit */,
 				359B5E36CC67940E2F3459AE /* M2DXCoreTests */,
 				76725571F8A4B8D74D1A9F66 /* M2DXFeatureTests */,
+				8AC7C1B522755999F413D0C9 /* M2DXMac */,
 				2C18E0B8E95C89294EBC395A /* Packages */,
 				233BF169A356A48E1921A2B3 /* Frameworks */,
 				C2AA4C3F930294E1F1464EBD /* Products */,
@@ -210,6 +230,15 @@
 			path = M2DXPackage/Tests/M2DXFeatureTests;
 			sourceTree = "<group>";
 		};
+		8AC7C1B522755999F413D0C9 /* M2DXMac */ = {
+			isa = PBXGroup;
+			children = (
+				D3C705343FF497EAFB041AEE /* Assets.xcassets */,
+				3D0AFF6BFD18BEC300776260 /* M2DXMacApp.swift */,
+			);
+			path = M2DXMac;
+			sourceTree = "<group>";
+		};
 		A46C848921B7C077ED8E3BCE /* Parameters */ = {
 			isa = PBXGroup;
 			children = (
@@ -233,6 +262,7 @@
 			children = (
 				8B189605F2A6C65052E33025 /* M2DX.app */,
 				9D367F6DB2128EB4B3A3A234 /* M2DXAudioUnit.appex */,
+				9DEAD5BA62B2BEC4CCE02E3A /* M2DXMac.app */,
 				B7BB4F1D5AB45BC0746E275C /* M2DXTests.xctest */,
 			);
 			name = Products;
@@ -304,6 +334,27 @@
 			productReference = 9D367F6DB2128EB4B3A3A234 /* M2DXAudioUnit.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		F6FD2EE8AEC396A018D1ECC1 /* M2DXMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9FAFE180ACBB56AFE7E7C058 /* Build configuration list for PBXNativeTarget "M2DXMac" */;
+			buildPhases = (
+				711EFC60AF2AD7F0AE31F1FB /* Sources */,
+				299D25EFC0608E28ED013697 /* Resources */,
+				A353779EF5993F51F3E3D562 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = M2DXMac;
+			packageProductDependencies = (
+				48123359DC266099B45806F4 /* M2DXFeature */,
+				346192A1BCAFAB937E3FBE67 /* M2DXCore */,
+			);
+			productName = M2DXMac;
+			productReference = 9DEAD5BA62B2BEC4CCE02E3A /* M2DXMac.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -322,6 +373,10 @@
 						ProvisioningStyle = Automatic;
 					};
 					D7BF0C227EBA765D5D2205B6 = {
+						DevelopmentTeam = K38MBRNKAT;
+						ProvisioningStyle = Automatic;
+					};
+					F6FD2EE8AEC396A018D1ECC1 = {
 						DevelopmentTeam = K38MBRNKAT;
 						ProvisioningStyle = Automatic;
 					};
@@ -346,12 +401,21 @@
 			targets = (
 				2A6D0F5DE25A323F0F81EFB1 /* M2DX */,
 				D7BF0C227EBA765D5D2205B6 /* M2DXAudioUnit */,
+				F6FD2EE8AEC396A018D1ECC1 /* M2DXMac */,
 				51E010163F5D22DE14096363 /* M2DXTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		299D25EFC0608E28ED013697 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6AC81ACAA4016669F28041B6 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8D78C4E472A7C81BC3A39FA7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -375,6 +439,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		711EFC60AF2AD7F0AE31F1FB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7EBEB19D910FB58A34B7E5F5 /* M2DXMacApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8D1B551529B0F23F2C211F6B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -389,6 +461,7 @@
 			files = (
 				DEAB71627CFDCDC8388E4A10 /* M2DXCoreTests.swift in Sources */,
 				FFAE0A31A04B5F4D87090721 /* M2DXFeatureTests.swift in Sources */,
+				07A0CA5F83FD3522B345A191 /* PropertyExchangeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -447,6 +520,31 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
+		};
+		3C95CE2A6804A770DDA3057F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/M2DXMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_GENERATION_MODE = GeneratedFile;
+				INFOPLIST_KEY_CFBundleDisplayName = M2DX;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DXMac;
+				PRODUCT_NAME = M2DXMac;
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
 		};
 		61B2880FCD754CDD5600D616 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -549,13 +647,38 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				SDKROOT = iphoneos;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		965E85F8B0ADC7DB36076E97 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/M2DXMac.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_GENERATION_MODE = GeneratedFile;
+				INFOPLIST_KEY_CFBundleDisplayName = M2DX;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DXMac;
+				PRODUCT_NAME = M2DXMac;
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
 		};
@@ -635,9 +758,9 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
-				SDKROOT = iphoneos;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -689,6 +812,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		9FAFE180ACBB56AFE7E7C058 /* Build configuration list for PBXNativeTarget "M2DXMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				965E85F8B0ADC7DB36076E97 /* Debug */,
+				3C95CE2A6804A770DDA3057F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		BE4A7CD26E064ADDDEF2054F /* Build configuration list for PBXNativeTarget "M2DX" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -711,6 +843,14 @@
 		02918B762427305731779201 /* M2DXCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = M2DXCore;
+		};
+		346192A1BCAFAB937E3FBE67 /* M2DXCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = M2DXCore;
+		};
+		48123359DC266099B45806F4 /* M2DXFeature */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = M2DXFeature;
 		};
 		6A803FFD6F0A73777A2F2BB3 /* M2DXFeature */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -9,27 +9,257 @@ import M2DXCore
 /// Root view for M2DX synthesizer with standalone audio capability
 @MainActor
 public struct M2DXRootView: View {
-    @State private var engineState = M2DXEngineState()
-    @State private var selectedOperator: Int = 1
-    @State private var selectedModule: Int = 1
-
-    /// Audio engine for standalone playback
     @State private var audioEngine = M2DXAudioEngine()
-
-    /// Current keyboard octave
+    @State private var midiInput = MIDIInputManager()
+    @State private var selectedOperator: Int = 1
     @State private var keyboardOctave: Int = 4
+    @State private var showAlgorithmSelector = false
+    @State private var showSettings = false
+    @State private var showKeyboard = true
+    @State private var midiChannel: Int = 0
+    @State private var masterTuning: Double = 0
+    @State private var feedbackValues: [Float] = Array(repeating: 0, count: 6)
 
-    /// Show/hide keyboard
-    @State private var showKeyboard: Bool = true
+    @State private var operatorEnvelopes: [EnvelopeParameters] = (0..<6).map { _ in
+        EnvelopeParameters()
+    }
+    @State private var operators: [OperatorParameters] = (0..<6).map {
+        OperatorParameters.defaultOperator(id: $0 + 1)
+    }
 
     public init() {}
 
     public var body: some View {
-        VStack {
-            Text("M2DX FM Synthesizer")
-                .font(.title2)
-                .fontWeight(.semibold)
+        VStack(spacing: 0) {
+            // ── Scrollable content ──
+            ScrollView {
+                VStack(spacing: 10) {
+                    headerBar
+                    operatorStrip
+                    operatorDetail
+                    envelopeSection
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 6)
+                .padding(.bottom, 12)
+            }
 
+            // ── Keyboard (show/hide) ──
+            if showKeyboard {
+                keyboardSection
+            }
+        }
+        .background(Color.m2dxBackground)
+        .task {
+            await audioEngine.start()
+            midiInput.onNoteOn = { note, velocity in
+                audioEngine.noteOn(note, velocity: velocity)
+            }
+            midiInput.onNoteOff = { note in
+                audioEngine.noteOff(note)
+            }
+            midiInput.start()
+
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+            }
+            midiInput.stop()
+            audioEngine.stop()
+        }
+        .sheet(isPresented: $showAlgorithmSelector) {
+            AlgorithmSelectorView(selectedAlgorithm: .init(
+                get: { audioEngine.algorithm },
+                set: { audioEngine.algorithm = $0 }
+            ))
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(
+                audioEngine: audioEngine,
+                midiInput: midiInput,
+                midiChannel: $midiChannel,
+                masterTuning: $masterTuning
+            )
+        }
+        .onChange(of: midiChannel) { _, newValue in
+            midiInput.receiveChannel = newValue
+        }
+    }
+
+    // MARK: - Header Bar (single compact row)
+
+    private var headerBar: some View {
+        HStack(spacing: 8) {
+            // Algorithm
+            Button {
+                showAlgorithmSelector = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text("ALG")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text("\(audioEngine.algorithm + 1)")
+                        .font(.subheadline.bold().monospacedDigit())
+                        .foregroundStyle(.cyan)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.cyan.opacity(0.1)))
+            }
+
+            Spacer()
+
+            // Status indicators
+            HStack(spacing: 6) {
+                // MIDI
+                Image(systemName: "pianokeys")
+                    .font(.system(size: 10))
+                    .foregroundStyle(midiInput.isConnected ? .cyan : .secondary.opacity(0.4))
+
+                // Audio
+                Image(systemName: audioEngine.isRunning ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(audioEngine.isRunning ? .green : .red)
+            }
+
+            // Keyboard toggle
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showKeyboard.toggle()
+                }
+            } label: {
+                Image(systemName: showKeyboard ? "pianokeys.inverse" : "pianokeys")
+                    .font(.system(size: 12))
+                    .foregroundStyle(showKeyboard ? .cyan : .secondary)
+            }
+
+            // Settings
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Operator Strip (horizontal 1x6)
+
+    private var operatorStrip: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<6, id: \.self) { index in
+                CompactOperatorCell(
+                    index: index + 1,
+                    level: operators[index].level,
+                    ratio: operators[index].frequencyRatio,
+                    isSelected: selectedOperator == index + 1
+                )
+                .onTapGesture {
+                    selectedOperator = index + 1
+                }
+            }
+        }
+    }
+
+    // MARK: - Operator Detail
+
+    private var operatorDetail: some View {
+        let i = selectedOperator - 1
+        return VStack(spacing: 8) {
+            // Title row
+            HStack {
+                Text("OP\(selectedOperator)")
+                    .font(.caption.bold())
+                    .foregroundStyle(.cyan)
+                Spacer()
+            }
+
+            // Level + Ratio
+            HStack(spacing: 12) {
+                paramSlider(label: "Level", value: $operators[i].level, range: 0...1,
+                            display: "\(Int(operators[i].level * 99))") {
+                    audioEngine.setOperatorLevel(i, level: Float($0))
+                }
+                paramSlider(label: "Ratio", value: $operators[i].frequencyRatio, range: 0.5...16,
+                            display: "\u{00D7}\(String(format: "%.2f", operators[i].frequencyRatio))") {
+                    audioEngine.setOperatorRatio(i, ratio: Float($0))
+                }
+            }
+
+            // Detune + Feedback
+            HStack(spacing: 12) {
+                // Detune
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("Detune")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(operators[i].detune > 0 ? "+" : "")\(operators[i].detune)")
+                            .font(.system(size: 9, design: .monospaced))
+                    }
+                    Slider(value: .init(
+                        get: { Double(operators[i].detune) },
+                        set: { operators[i].detune = Int($0) }
+                    ), in: -50...50, step: 1)
+                    .controlSize(.mini)
+                    .onChange(of: operators[i].detune) { _, newValue in
+                        audioEngine.setOperatorDetune(i, cents: Float(newValue))
+                    }
+                }
+
+                // Feedback
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("Feedback")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(feedbackValues[i], specifier: "%.2f")")
+                            .font(.system(size: 9, design: .monospaced))
+                    }
+                    Slider(value: feedbackBinding(for: i), in: 0...1)
+                        .controlSize(.mini)
+                }
+            }
+        }
+        .padding(10)
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.m2dxSecondaryBackground)
+        }
+    }
+
+    // MARK: - Envelope Section
+
+    private var envelopeSection: some View {
+        let i = selectedOperator - 1
+        return EnvelopeEditorView(
+            envelope: $operatorEnvelopes[i],
+            onChanged: { env in
+                audioEngine.setOperatorEGRates(
+                    i,
+                    r1: Float(env.rate1 * 99),
+                    r2: Float(env.rate2 * 99),
+                    r3: Float(env.rate3 * 99),
+                    r4: Float(env.rate4 * 99)
+                )
+                audioEngine.setOperatorEGLevels(
+                    i,
+                    l1: Float(env.level1),
+                    l2: Float(env.level2),
+                    l3: Float(env.level3),
+                    l4: Float(env.level4)
+                )
+            }
+        )
+    }
+
+    // MARK: - Keyboard Section
+
+    private var keyboardSection: some View {
+        VStack(spacing: 0) {
+            Divider()
             if audioEngine.isRunning {
                 MIDIKeyboardView(
                     octave: $keyboardOctave,
@@ -41,518 +271,111 @@ public struct M2DXRootView: View {
                         audioEngine.noteOff(note)
                     }
                 )
-                .padding()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
             } else if let error = audioEngine.errorMessage {
                 Text(error)
                     .foregroundStyle(.red)
                     .font(.caption)
+                    .padding(8)
             } else {
-                ProgressView("Starting audio engine...")
+                ProgressView("Starting...")
+                    .font(.caption)
+                    .padding(8)
             }
         }
-        .task {
-            await audioEngine.start()
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-            }
-            audioEngine.stop()
-        }
+        .background(Color.m2dxSecondaryBackground)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
-    private var currentVoiceName: String {
-        switch engineState.mode {
-        case .m2dx8op:
-            return engineState.m2dxVoice.name
-        case .tx816:
-            return "TX816"
-        }
-    }
+    // MARK: - Helpers
 
-    private func initializeVoice() {
-        switch engineState.mode {
-        case .m2dx8op:
-            engineState.m2dxVoice = M2DXVoice()
-        case .tx816:
-            engineState.tx816Config = TX816Configuration()
-        }
-    }
-}
-
-// MARK: - M2DX 8-Operator View
-
-/// View for M2DX native 6-operator mode
-struct M2DX8OpView: View {
-    @Binding var voice: M2DXVoice
-    @Binding var selectedOperator: Int
-    var audioEngine: M2DXAudioEngine?
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // Algorithm display
-                AlgorithmView(
-                    algorithm: voice.algorithm,
-                    operatorCount: 6
-                )
-                .frame(height: 100)
-                .padding(.horizontal)
-
-                Divider()
-
-                // 6 Operator grid (2 rows × 3 columns)
-                OperatorGridView8Op(
-                    operators: $voice.operators,
-                    selectedOperator: $selectedOperator
-                )
-                .padding(.horizontal)
-
-                Divider()
-
-                // Parameter section
-                if let opIndex = voice.operators.firstIndex(where: { $0.id == selectedOperator }) {
-                    OperatorDetailView(
-                        op: $voice.operators[opIndex],
-                        audioEngine: audioEngine
-                    )
-                    .padding(.horizontal)
-                }
-
-                Spacer(minLength: 20)
-            }
-            .padding(.top)
-        }
-    }
-}
-
-// MARK: - TX816 View
-
-/// View for TX816 simulation mode
-struct TX816View: View {
-    @Binding var config: TX816Configuration
-    @Binding var selectedModule: Int
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // Module rack display
-                TX816RackView(
-                    modules: $config.modules,
-                    selectedModule: $selectedModule
-                )
-                .padding(.horizontal)
-
-                Divider()
-
-                // Selected module detail
-                if let moduleIndex = config.modules.firstIndex(where: { $0.id == selectedModule }) {
-                    TX816ModuleDetailView(
-                        module: $config.modules[moduleIndex]
-                    )
-                    .padding(.horizontal)
-                }
-
-                Spacer(minLength: 20)
-            }
-            .padding(.top)
-        }
-    }
-}
-
-// MARK: - Algorithm View
-
-/// Displays the current FM algorithm routing
-struct AlgorithmView: View {
-    let algorithm: M2DXAlgorithm
-    let operatorCount: Int
-
-    var body: some View {
-        VStack {
+    private func paramSlider(
+        label: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        display: String,
+        onChange: @escaping (Double) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text("Algorithm \(algorithm.rawValue)")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-
-                if algorithm.isExtended {
-                    Text("8-OP")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.blue)
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
-                }
+                Text(label)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(display)
+                    .font(.system(size: 9, design: .monospaced))
             }
-
-            // Placeholder for algorithm diagram
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.quaternary)
-                .overlay {
-                    Text("\(operatorCount)-OP Algorithm Diagram")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            Slider(value: value, in: range)
+                .controlSize(.mini)
+                .onChange(of: value.wrappedValue) { _, newValue in
+                    onChange(newValue)
                 }
         }
     }
-}
 
-// MARK: - 8-Operator Grid View
-
-/// Grid displaying all 6 operators (2×3 layout)
-struct OperatorGridView8Op: View {
-    @Binding var operators: [OperatorParameters]
-    @Binding var selectedOperator: Int
-
-    let columns = [
-        GridItem(.flexible()),
-        GridItem(.flexible()),
-        GridItem(.flexible())
-    ]
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(0..<6, id: \.self) { index in
-                if index < operators.count {
-                    OperatorCell(
-                        operatorIndex: index + 1,
-                        parameters: $operators[index],
-                        isSelected: selectedOperator == index + 1
-                    )
-                    .onTapGesture {
-                        selectedOperator = index + 1
-                    }
-                }
+    private func feedbackBinding(for opIndex: Int) -> Binding<Double> {
+        .init(
+            get: { Double(feedbackValues[opIndex]) },
+            set: { newValue in
+                feedbackValues[opIndex] = Float(newValue)
+                audioEngine.setOperatorFeedback(opIndex, feedback: Float(newValue))
             }
-        }
+        )
     }
 }
 
-// MARK: - Operator Cell
+// MARK: - Compact Operator Cell (horizontal strip)
 
-/// Single operator display cell
-struct OperatorCell: View {
-    let operatorIndex: Int
-    @Binding var parameters: OperatorParameters
+/// Slim operator cell for horizontal 1x6 layout
+struct CompactOperatorCell: View {
+    let index: Int
+    let level: Double
+    let ratio: Double
     let isSelected: Bool
 
     var body: some View {
-        VStack(spacing: 6) {
-            Text("OP\(operatorIndex)")
-                .font(.caption)
-                .fontWeight(.bold)
+        VStack(spacing: 3) {
+            Text("OP\(index)")
+                .font(.system(size: 8, weight: .bold))
 
-            // Level indicator
-            GeometryReader { geometry in
+            // Level bar
+            GeometryReader { geo in
                 ZStack(alignment: .bottom) {
-                    RoundedRectangle(cornerRadius: 3)
+                    RoundedRectangle(cornerRadius: 2)
                         .fill(.quaternary)
-
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(operatorColor.gradient)
-                        .frame(height: geometry.size.height * parameters.level)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color.gradient)
+                        .frame(height: geo.size.height * level)
                 }
             }
-            .frame(width: 24, height: 50)
+            .frame(height: 32)
 
-            Text("\(Int(parameters.level * 99))")
-                .font(.caption2.monospacedDigit())
-
-            Text("×\(parameters.frequencyRatio, specifier: "%.1f")")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+            Text("\(Int(level * 99))")
+                .font(.system(size: 8, design: .monospaced))
         }
-        .padding(8)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 5)
+        .padding(.horizontal, 2)
         .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? operatorColor.opacity(0.15) : Color.clear)
-                .stroke(isSelected ? operatorColor : Color.secondary.opacity(0.3), lineWidth: isSelected ? 2 : 1)
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isSelected ? color.opacity(0.15) : Color.clear)
+                .stroke(isSelected ? color : Color.secondary.opacity(0.2), lineWidth: isSelected ? 1.5 : 0.5)
         }
     }
 
-    private var operatorColor: Color {
-        switch operatorIndex {
+    private var color: Color {
+        switch index {
         case 1, 2: return .blue
         case 3, 4: return .cyan
         case 5, 6: return .teal
-        case 7, 8: return .mint
         default: return .blue
         }
     }
 }
 
-// MARK: - Operator Detail View
-
-/// Detailed parameter view for selected operator
-struct OperatorDetailView: View {
-    @Binding var op: OperatorParameters
-    var audioEngine: M2DXAudioEngine?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Operator \(op.id)")
-                .font(.headline)
-
-            // Level & Ratio
-            HStack(spacing: 20) {
-                VStack(alignment: .leading) {
-                    Text("Level")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Slider(value: $op.level, in: 0...1)
-                        .onChange(of: op.level) { _, newValue in
-                            audioEngine?.setOperatorLevel(op.id - 1, level: Float(newValue))
-                        }
-                    Text("\(Int(op.level * 99))")
-                        .font(.caption.monospacedDigit())
-                }
-
-                VStack(alignment: .leading) {
-                    Text("Ratio")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Slider(value: $op.frequencyRatio, in: 0.5...16)
-                        .onChange(of: op.frequencyRatio) { _, newValue in
-                            audioEngine?.setOperatorRatio(op.id - 1, ratio: Float(newValue))
-                        }
-                    Text("×\(op.frequencyRatio, specifier: "%.2f")")
-                        .font(.caption.monospacedDigit())
-                }
-            }
-
-            // Detune & Velocity
-            HStack(spacing: 20) {
-                VStack(alignment: .leading) {
-                    Text("Detune")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Slider(value: .init(
-                        get: { Double(op.detune) },
-                        set: { op.detune = Int($0) }
-                    ), in: -50...50, step: 1)
-                        .onChange(of: op.detune) { _, newValue in
-                            audioEngine?.setOperatorDetune(op.id - 1, cents: Float(newValue))
-                        }
-                    Text("\(op.detune > 0 ? "+" : "")\(op.detune)")
-                        .font(.caption.monospacedDigit())
-                }
-
-                VStack(alignment: .leading) {
-                    Text("Vel Sens")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Slider(value: $op.velocitySensitivity, in: 0...1)
-                    Text("\(Int(op.velocitySensitivity * 100))%")
-                        .font(.caption.monospacedDigit())
-                }
-            }
-        }
-        .padding()
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.quaternary.opacity(0.5))
-        }
-    }
-}
-
-// MARK: - TX816 Rack View
-
-/// Display of 8 TX816 modules
-struct TX816RackView: View {
-    @Binding var modules: [TX816Module]
-    @Binding var selectedModule: Int
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Text("TX816 RACK")
-                .font(.caption)
-                .fontWeight(.bold)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                ForEach(0..<8, id: \.self) { index in
-                    if index < modules.count {
-                        TX816ModuleCell(
-                            module: $modules[index],
-                            isSelected: selectedModule == index + 1
-                        )
-                        .onTapGesture {
-                            selectedModule = index + 1
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - TX816 Module Cell
-
-/// Single TX816 module cell
-struct TX816ModuleCell: View {
-    @Binding var module: TX816Module
-    let isSelected: Bool
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Text("TF\(module.id)")
-                .font(.caption2)
-                .fontWeight(.bold)
-
-            // Volume meter
-            GeometryReader { geometry in
-                ZStack(alignment: .bottom) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(.quaternary)
-
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(module.enabled ? Color.green.gradient : Color.gray.gradient)
-                        .frame(height: geometry.size.height * module.volume)
-                }
-            }
-            .frame(width: 16, height: 40)
-
-            Text("CH\(module.midiChannel)")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-
-            // Enable toggle
-            Image(systemName: module.enabled ? "power.circle.fill" : "power.circle")
-                .font(.caption)
-                .foregroundStyle(module.enabled ? .green : .secondary)
-        }
-        .padding(6)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color.orange.opacity(0.15) : Color.clear)
-                .stroke(isSelected ? Color.orange : Color.secondary.opacity(0.3), lineWidth: isSelected ? 2 : 1)
-        }
-    }
-}
-
-// MARK: - TX816 Module Detail View
-
-/// Detailed view for selected TX816 module
-struct TX816ModuleDetailView: View {
-    @Binding var module: TX816Module
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Module TF\(module.id)")
-                    .font(.headline)
-
-                Spacer()
-
-                Toggle("Enabled", isOn: $module.enabled)
-                    .labelsHidden()
-            }
-
-            // Voice name
-            Text(module.voice.name)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            // Volume & Pan
-            HStack(spacing: 20) {
-                VStack(alignment: .leading) {
-                    Text("Volume")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Slider(value: $module.volume, in: 0...1)
-                    Text("\(Int(module.volume * 100))%")
-                        .font(.caption.monospacedDigit())
-                }
-
-                VStack(alignment: .leading) {
-                    Text("Pan")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Slider(value: $module.pan, in: -1...1)
-                    Text(panLabel)
-                        .font(.caption.monospacedDigit())
-                }
-            }
-
-            // MIDI Channel & Note Shift
-            HStack(spacing: 20) {
-                VStack(alignment: .leading) {
-                    Text("MIDI Ch")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Picker("", selection: $module.midiChannel) {
-                        ForEach(1...16, id: \.self) { ch in
-                            Text("\(ch)").tag(ch)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-
-                VStack(alignment: .leading) {
-                    Text("Note Shift")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Slider(value: .init(
-                        get: { Double(module.noteShift) },
-                        set: { module.noteShift = Int($0) }
-                    ), in: -24...24, step: 1)
-                    Text("\(module.noteShift > 0 ? "+" : "")\(module.noteShift)")
-                        .font(.caption.monospacedDigit())
-                }
-            }
-
-            // 6-operator preview
-            HStack(spacing: 4) {
-                ForEach(0..<6, id: \.self) { index in
-                    if index < module.voice.operators.count {
-                        MiniOperatorView(
-                            level: module.voice.operators[index].level
-                        )
-                    }
-                }
-            }
-            .padding(.top, 8)
-        }
-        .padding()
-        .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.quaternary.opacity(0.5))
-        }
-    }
-
-    private var panLabel: String {
-        if module.pan < -0.05 {
-            return "L\(Int(abs(module.pan) * 100))"
-        } else if module.pan > 0.05 {
-            return "R\(Int(module.pan * 100))"
-        } else {
-            return "C"
-        }
-    }
-}
-
-// MARK: - Mini Operator View
-
-/// Minimal operator view for TX816 module preview
-struct MiniOperatorView: View {
-    let level: Double
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(.quaternary)
-
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(.blue.gradient)
-                    .frame(height: geometry.size.height * level)
-            }
-        }
-        .frame(width: 12, height: 30)
-    }
-}
-
 // MARK: - Preview
 
-#Preview("M2DX 8-OP") {
+#Preview("M2DX Synthesizer") {
     M2DXRootView()
 }

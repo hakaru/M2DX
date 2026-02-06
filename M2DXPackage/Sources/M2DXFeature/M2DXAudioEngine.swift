@@ -122,11 +122,13 @@ public final class M2DXAudioEngine {
             audioEngine?.detach(node)
         }
 
+        #if os(iOS)
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
             print("M2DXAudioEngine: Failed to deactivate audio session: \(error)")
         }
+        #endif
 
         playerNode = nil
         audioEngine = nil
@@ -136,7 +138,8 @@ public final class M2DXAudioEngine {
     // MARK: - Audio Engine Setup
 
     private func setupAudioEngine() throws {
-        // Configure audio session
+        // Configure audio session (iOS only)
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
@@ -146,6 +149,7 @@ public final class M2DXAudioEngine {
         } catch {
             throw AudioEngineError.audioSessionSetupFailed(underlying: error)
         }
+        #endif
 
         let engine = AVAudioEngine()
 
@@ -311,5 +315,17 @@ public final class M2DXAudioEngine {
     public func setOperatorFeedback(_ opIndex: Int, feedback: Float) {
         guard opIndex >= 0 && opIndex < 6 else { return }
         synth.setOperatorFeedback(opIndex, feedback: feedback)
+    }
+
+    /// Set operator EG rates (DX7 style: R1-R4, range 0-99)
+    public func setOperatorEGRates(_ opIndex: Int, r1: Float, r2: Float, r3: Float, r4: Float) {
+        guard opIndex >= 0 && opIndex < 6 else { return }
+        synth.setOperatorEGRates(opIndex, r1: r1, r2: r2, r3: r3, r4: r4)
+    }
+
+    /// Set operator EG levels (DX7 style: L1-L4, range 0.0-1.0)
+    public func setOperatorEGLevels(_ opIndex: Int, l1: Float, l2: Float, l3: Float, l4: Float) {
+        guard opIndex >= 0 && opIndex < 6 else { return }
+        synth.setOperatorEGLevels(opIndex, l1: l1, l2: l2, l3: l3, l4: l4)
     }
 }
