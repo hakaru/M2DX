@@ -371,3 +371,48 @@
 決定事項: CC・ペダル・ベンド実装完了、実機確認済み
 次のTODO: コミット
 ---
+
+---
+2026-02-07 06:43
+作業項目: MIDI 2.0対応状況の調査
+追加機能の説明: 調査のみ（コード変更なし）
+決定事項: 下記に対応状況を整理
+次のTODO: ユーザー判断待ち
+---
+
+---
+2026-02-07 06:48
+作業項目: MIDI 2.0 Channel Voice対応の実装開始
+追加機能の説明:
+- CoreMIDITransport: ._1_0 → ._2_0 に切り替え
+- handleEventList: message type 0x4 (MIDI 2.0 Channel Voice) デコード追加
+  - 2ワードメッセージ対応（index-based iteration）
+  - NoteOn/Off: 16bit velocity → 7bit変換してMIDI 1.0バイト出力
+  - CC: 32bit → 7bit変換
+  - PitchBend: 32bit → 14bit変換
+  - ChannelPressure/PolyPressure対応
+- type 0x2 (MIDI 1.0 CV) もフォールバックとして残す
+決定事項: ._2_0切り替え + type 0x4 デコード実装
+次のTODO: 実装・ビルド・実機テスト
+---
+
+---
+2026-02-07 06:52
+作業項目: MIDI 2.0 Channel Voice対応完了
+追加機能の説明:
+- CoreMIDITransport: ._1_0 → ._2_0 に切り替え完了
+- handleEventList: type 0x4 (MIDI 2.0 Channel Voice) デコード実装
+  - index-based word iteration（2ワードメッセージ対応）
+  - NoteOn/Off: 16bit velocity → 7bit変換
+  - CC: 32bit → 7bit変換
+  - PitchBend: 32bit → 14bit変換
+  - Channel/Poly Pressure, Program Change 対応
+- type 0x2 (MIDI 1.0 CV) もフォールバックとして残存
+- iOS実機テスト結果:
+  - 鍵盤(NoteOn/Off): OK
+  - ピッチベンド: OK
+  - サスティンペダル: OK
+  - デバッグ表示: 更新が速すぎてmt値は目視困難（動作には問題なし）
+決定事項: MIDI 2.0 Channel Voice対応完了、実機確認済み
+次のTODO: コミット
+---
