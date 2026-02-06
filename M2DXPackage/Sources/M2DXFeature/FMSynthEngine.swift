@@ -12,6 +12,13 @@ private let kNumAlgorithms = 32
 private let kVoiceNormalizationScale: Float = 0.7
 private let kTwoPi: Float = 2.0 * .pi
 
+/// Fast tanh approximation for soft clipping (Pade approximant)
+@inline(__always)
+private func tanhApprox(_ x: Float) -> Float {
+    let x2 = x * x
+    return x * (27.0 + x2) / (27.0 + 9.0 * x2)
+}
+
 // MARK: - Envelope
 
 /// DX7-style 4-rate / 4-level envelope generator
@@ -779,8 +786,12 @@ final class FMSynthEngine: @unchecked Sendable {
                 output /= sqrtf(Float(activeCount)) * kVoiceNormalizationScale
             }
             let sample = output * vol
-            bufferL[frame] = sample
-            bufferR[frame] = sample
+            // Soft clipping (tanh-style) to prevent harsh digital distortion
+            let clipped = sample > 1.0 || sample < -1.0
+                ? tanhApprox(sample)
+                : sample
+            bufferL[frame] = clipped
+            bufferR[frame] = clipped
         }
     }
 
