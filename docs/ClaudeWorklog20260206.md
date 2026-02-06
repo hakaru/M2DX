@@ -416,3 +416,47 @@
 - 実機インストール・GarageBand動作確認
 - MIDI 2.0 PE対応DAWでの検証
 ---
+
+---
+2026-02-06 11:21
+作業項目: スタンドアロン動作対応実装開始
+追加機能の説明:
+- AVAudioEngineでAUv3を内部ホスト
+- MIDIキーボードUI追加
+- パラメータUI ↔ AudioUnit同期
+実装内容:
+1. M2DXAudioEngine.swift - AVAudioEngine + AUv3ホスティング
+2. MIDIKeyboardView.swift - ピアノ鍵盤UI
+3. M2DXRootView更新 - エンジン統合・キーボード追加
+決定事項: スタンドアロンでも音が出るように拡張
+次のTODO: 実装開始
+---
+
+---
+2026-02-06 11:25
+作業項目: スタンドアロン動作対応実装完了
+追加機能の説明:
+- M2DXAudioEngine.swift 新規作成
+  - AVAudioEngineでAUv3を内部ホスト
+  - scheduleMIDIEventBlockでMIDI送信
+  - noteOn/noteOff/allNotesOff メソッド
+  - パラメータ設定メソッド（setOperatorLevel等）
+- MIDIKeyboardView.swift 新規作成
+  - 2オクターブピアノ鍵盤UI
+  - タッチで演奏可能
+  - オクターブ切り替え
+  - CompactKeyboardView（グリッド版）も追加
+- M2DXRootView更新
+  - audioEngine統合（.taskでstart、onDisappearでstop）
+  - キーボード表示/非表示トグル
+  - オーディオ状態インジケーター
+- OperatorDetailView更新
+  - スライダー変更時にaudioEngine更新（onChange）
+- 実機ビルド成功（BUILD SUCCEEDED）
+決定事項:
+- スタンドアロンでアプリ起動→キーボード演奏で音が出る構成
+- AUv3はloadOutOfProcessで読み込み
+次のTODO:
+- 実機インストール・動作確認
+- 音が出ることを確認
+---

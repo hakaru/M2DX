@@ -6,12 +6,21 @@ import M2DXCore
 
 // MARK: - Main Content View
 
-/// Root view for M2DX synthesizer
+/// Root view for M2DX synthesizer with standalone audio capability
 @MainActor
 public struct M2DXRootView: View {
     @State private var engineState = M2DXEngineState()
     @State private var selectedOperator: Int = 1
     @State private var selectedModule: Int = 1
+
+    /// Audio engine for standalone playback
+    @State private var audioEngine = M2DXAudioEngine()
+
+    /// Current keyboard octave
+    @State private var keyboardOctave: Int = 4
+
+    /// Show/hide keyboard
+    @State private var showKeyboard: Bool = true
 
     public init() {}
 
@@ -36,13 +45,32 @@ public struct M2DXRootView: View {
                 case .m2dx8op:
                     M2DX8OpView(
                         voice: $engineState.m2dxVoice,
-                        selectedOperator: $selectedOperator
+                        selectedOperator: $selectedOperator,
+                        audioEngine: audioEngine
                     )
                 case .tx816:
                     TX816View(
                         config: $engineState.tx816Config,
                         selectedModule: $selectedModule
                     )
+                }
+
+                // Keyboard section
+                if showKeyboard {
+                    Divider()
+
+                    MIDIKeyboardView(
+                        octave: $keyboardOctave,
+                        octaveCount: 2,
+                        onNoteOn: { note, velocity in
+                            audioEngine.noteOn(note, velocity: velocity)
+                        },
+                        onNoteOff: { note in
+                            audioEngine.noteOff(note)
+                        }
+                    )
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
                 }
             }
             .navigationTitle("M2DX")
@@ -62,10 +90,32 @@ public struct M2DXRootView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Text(currentVoiceName)
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        // Audio status indicator
+                        Image(systemName: audioEngine.isRunning ? "speaker.wave.2.fill" : "speaker.slash")
+                            .foregroundStyle(audioEngine.isRunning ? .green : .secondary)
+
+                        // Keyboard toggle
+                        Button {
+                            withAnimation {
+                                showKeyboard.toggle()
+                            }
+                        } label: {
+                            Image(systemName: showKeyboard ? "pianokeys" : "pianokeys.inverse")
+                        }
+
+                        Text(currentVoiceName)
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+            }
+            .task {
+                // Start audio engine when view appears
+                await audioEngine.start()
+            }
+            .onDisappear {
+                audioEngine.stop()
             }
         }
     }
@@ -95,6 +145,7 @@ public struct M2DXRootView: View {
 struct M2DX8OpView: View {
     @Binding var voice: M2DXVoice
     @Binding var selectedOperator: Int
+    var audioEngine: M2DXAudioEngine?
 
     var body: some View {
         ScrollView {
@@ -121,7 +172,8 @@ struct M2DX8OpView: View {
                 // Parameter section
                 if let opIndex = voice.operators.firstIndex(where: { $0.id == selectedOperator }) {
                     OperatorDetailView(
-                        op: $voice.operators[opIndex]
+                        op: $voice.operators[opIndex],
+                        audioEngine: audioEngine
                     )
                     .padding(.horizontal)
                 }
@@ -295,6 +347,7 @@ struct OperatorCell: View {
 /// Detailed parameter view for selected operator
 struct OperatorDetailView: View {
     @Binding var op: OperatorParameters
+    var audioEngine: M2DXAudioEngine?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -308,6 +361,9 @@ struct OperatorDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Slider(value: $op.level, in: 0...1)
+                        .onChange(of: op.level) { _, newValue in
+                            audioEngine?.setOperatorLevel(op.id - 1, level: Float(newValue))
+                        }
                     Text("\(Int(op.level * 99))")
                         .font(.caption.monospacedDigit())
                 }
@@ -317,6 +373,9 @@ struct OperatorDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Slider(value: $op.frequencyRatio, in: 0.5...16)
+                        .onChange(of: op.frequencyRatio) { _, newValue in
+                            audioEngine?.setOperatorRatio(op.id - 1, ratio: Float(newValue))
+                        }
                     Text("×\(op.frequencyRatio, specifier: "%.2f")")
                         .font(.caption.monospacedDigit())
                 }
@@ -332,6 +391,9 @@ struct OperatorDetailView: View {
                         get: { Double(op.detune) },
                         set: { op.detune = Int($0) }
                     ), in: -50...50, step: 1)
+                        .onChange(of: op.detune) { _, newValue in
+                            audioEngine?.setOperatorDetune(op.id - 1, cents: Float(newValue))
+                        }
                     Text("\(op.detune > 0 ? "+" : "")\(op.detune)")
                         .font(.caption.monospacedDigit())
                 }
