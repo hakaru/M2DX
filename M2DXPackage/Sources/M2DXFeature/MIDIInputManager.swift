@@ -2,6 +2,7 @@
 // External MIDI device input via MIDI2Kit with MIDI 2.0 UMP support
 
 import Foundation
+import M2DXCore
 import MIDI2Kit
 
 // MARK: - MIDI Source Types
@@ -34,6 +35,9 @@ public final class MIDIInputManager {
     /// Task for receiving MIDI data
     private var receiveTask: Task<Void, Never>?
 
+    /// MIDI-CI Property Exchange responder
+    private var peResponder: PEResponder?
+
     /// Whether MIDI is initialized
     public private(set) var isConnected: Bool = false
 
@@ -61,6 +65,29 @@ public final class MIDIInputManager {
     /// Callback for control change events
     public var onControlChange: ((UInt8, UInt8) -> Void)?
 
+    // MARK: - Debug Info (visible on UI)
+
+    /// Debug: detected MIDI source names at connect time
+    public private(set) var debugSources: [String] = []
+
+    /// Debug: number of connected sources
+    public private(set) var debugConnectedCount: Int = 0
+
+    /// Debug: total received message count
+    public private(set) var debugReceiveCount: Int = 0
+
+    /// Debug: last received raw bytes (hex)
+    public private(set) var debugLastReceived: String = "(none)"
+
+    /// Debug: last parsed event description
+    public private(set) var debugLastEvent: String = "(none)"
+
+    /// Debug: CoreMIDI callback count (from transport)
+    public var debugTransportCallback: String {
+        guard let transport else { return "no transport" }
+        return "cb=\(transport.debugCallbackCount) words=\(transport.debugWordCount) last=\(transport.debugLastCallback)\nword=\(transport.debugLastWord)"
+    }
+
     // MARK: - Initialization
 
     public init() {}
@@ -73,9 +100,20 @@ public final class MIDIInputManager {
             let midi = try CoreMIDITransport(clientName: "M2DX")
             self.transport = midi
 
+            // Create PEResponder for MIDI-CI Property Exchange
+            let responder = PEResponder(muid: MUID.random(), transport: midi)
+            self.peResponder = responder
+            Task { await self.registerPEResources(responder) }
+
             let transportRef = midi
             let mode = selectedSourceMode
             receiveTask = Task { [weak self] in
+                // Enumerate available sources
+                let detectedSources = await transportRef.sources
+                await MainActor.run {
+                    self?.debugSources = detectedSources.map { "\($0.name) (\($0.isOnline ? "online" : "offline"))" }
+                }
+
                 // Connect based on selected mode
                 switch mode {
                 case .all:
@@ -85,15 +123,37 @@ public final class MIDIInputManager {
                     if let match = sources.first(where: { $0.name == name }) {
                         try? await transportRef.connect(to: match.sourceID)
                     } else {
-                        // Fallback to all if named source not found
                         try? await transportRef.connectToAllSources()
                     }
+                }
+
+                let connCount = await transportRef.connectedSourceCount
+                await MainActor.run {
+                    self?.debugConnectedCount = connCount
                 }
 
                 // Listen for MIDI data
                 for await received in transportRef.received {
                     guard let self else { break }
-                    await self.handleReceivedData(received.data)
+                    let data = received.data
+                    let hex = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+
+                    await MainActor.run {
+                        self.debugReceiveCount += 1
+                        self.debugLastReceived = "\(data.count)B: \(hex)\(data.count > 16 ? "..." : "")"
+                    }
+
+                    // CI SysEx: F0 7E <deviceID> 0D <sub-ID2> ...
+                    if data.count >= 4 && data[0] == 0xF0 && data[1] == 0x7E && data[3] == 0x0D {
+                        await MainActor.run {
+                            self.debugLastEvent = "CI SysEx (\(data.count)B)"
+                        }
+                        if let resp = self.peResponder {
+                            await resp.handleMessage(data)
+                        }
+                    } else {
+                        await self.handleReceivedData(data)
+                    }
                 }
             }
 
@@ -117,6 +177,7 @@ public final class MIDIInputManager {
     public func stop() {
         receiveTask?.cancel()
         receiveTask = nil
+        peResponder = nil
 
         if let transport {
             Task {
@@ -154,6 +215,39 @@ public final class MIDIInputManager {
         }
     }
 
+    // MARK: - Property Exchange
+
+    /// Register PE resources (ResourceList, DeviceInfo, ProgramList)
+    private func registerPEResources(_ responder: PEResponder) async {
+        // ResourceList — advertise available resources
+        await responder.registerResource("ResourceList", resource: StaticResource(json: """
+        [
+            {"resource":"ResourceList","canGet":true},
+            {"resource":"DeviceInfo","canGet":true},
+            {"resource":"ProgramList","canGet":true}
+        ]
+        """))
+
+        // DeviceInfo
+        await responder.registerResource("DeviceInfo", resource: StaticResource(json: """
+        {
+            "manufacturerName":"M2DX",
+            "productName":"M2DX DX7 Synthesizer",
+            "softwareVersion":"1.0",
+            "familyName":"FM Synthesizer",
+            "modelName":"DX7 Compatible"
+        }
+        """))
+
+        // ProgramList — dynamic from DX7 factory presets
+        await responder.registerResource("ProgramList", resource: ComputedResource { _ in
+            let programs = DX7FactoryPresets.all.enumerated().map { index, preset in
+                PEProgramDef(programNumber: index, bankMSB: 0, bankLSB: 0, name: preset.name)
+            }
+            return try JSONEncoder().encode(programs)
+        })
+    }
+
     // MARK: - Event Handling
 
     /// Handle raw MIDI bytes received from CoreMIDITransport
@@ -180,6 +274,7 @@ public final class MIDIInputManager {
                 guard offset + 2 < data.count else { break }
                 let note = data[offset + 1]
                 let velocity = data[offset + 2]
+                debugLastEvent = "NoteOn ch=\(channel) n=\(note) v=\(velocity)"
                 if passesFilter {
                     if velocity == 0 {
                         await MainActor.run { onNoteOff?(note) }

@@ -41,6 +41,9 @@ struct SettingsView: View {
                 // ── Connected Devices ──
                 devicesSection
 
+                // ── MIDI Debug ──
+                midiDebugSection
+
                 // ── About ──
                 aboutSection
             }
@@ -225,6 +228,82 @@ struct SettingsView: View {
             }
         } header: {
             Text("Connected MIDI Devices")
+        }
+    }
+
+    // MARK: - MIDI Debug Section
+
+    private var midiDebugSection: some View {
+        Section {
+            // Detected sources
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Sources at connect")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if midiInput.debugSources.isEmpty {
+                    Text("(none detected)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.orange)
+                } else {
+                    ForEach(midiInput.debugSources, id: \.self) { src in
+                        Text(src)
+                            .font(.caption.monospaced())
+                    }
+                }
+            }
+
+            HStack {
+                Text("Connected")
+                Spacer()
+                Text("\(midiInput.debugConnectedCount)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(midiInput.debugConnectedCount > 0 ? .green : .orange)
+            }
+
+            HStack {
+                Text("Received msgs")
+                Spacer()
+                Text("\(midiInput.debugReceiveCount)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(midiInput.debugReceiveCount > 0 ? .green : .secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Last raw data")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(midiInput.debugLastReceived)
+                    .font(.caption.monospaced())
+                    .lineLimit(2)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Last event")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(midiInput.debugLastEvent)
+                    .font(.caption.monospaced())
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Transport callback")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(midiInput.debugTransportCallback)
+                    .font(.caption.monospaced())
+                    .lineLimit(5)
+            }
+
+            Button {
+                midiInput.stop()
+                midiInput.start()
+            } label: {
+                Label("Reconnect MIDI", systemImage: "arrow.triangle.2.circlepath")
+            }
+        } header: {
+            Text("MIDI Debug")
+        } footer: {
+            Text("Diagnostic info for troubleshooting MIDI input.")
         }
     }
 
