@@ -15,8 +15,8 @@ struct MIDIEvent: Sendable {
     }
 
     let kind: Kind
-    let data1: UInt8
-    let data2: UInt8
+    let data1: UInt8       // note number or CC number (7-bit)
+    let data2: UInt32      // velocity16, CC value32, or pitchBend32
 }
 
 // MARK: - MIDI Event Queue

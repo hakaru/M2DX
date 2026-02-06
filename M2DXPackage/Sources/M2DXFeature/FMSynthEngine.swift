@@ -290,9 +290,9 @@ private struct Voice {
         withOp(5) { $0.setSampleRate(sr) }
     }
 
-    mutating func noteOn(_ n: UInt8, velocity: UInt8) {
+    mutating func noteOn(_ n: UInt8, velocity16: UInt16) {
         note = n
-        velScale = Float(velocity) / 127.0
+        velScale = Float(velocity16) / 65535.0
         active = true
         let freq: Float = 440.0 * powf(2.0, (Float(n) - 69.0) / 12.0)
         withOp(0) { $0.noteOn(baseFreq: freq) }
@@ -513,14 +513,15 @@ final class FMSynthEngine: @unchecked Sendable {
         for event in events {
             switch event.kind {
             case .noteOn:
-                if event.data2 == 0 { doNoteOff(event.data1) }
-                else { doNoteOn(event.data1, velocity: event.data2) }
+                let vel16 = UInt16(event.data2 & 0xFFFF)
+                if vel16 == 0 { doNoteOff(event.data1) }
+                else { doNoteOn(event.data1, velocity16: vel16) }
             case .noteOff:
                 doNoteOff(event.data1)
             case .controlChange:
-                doControlChange(event.data1, value: event.data2)
+                doControlChange(event.data1, value32: event.data2)
             case .pitchBend:
-                doPitchBend(lsb: event.data1, msb: event.data2)
+                doPitchBend32(event.data2)
             }
         }
 
@@ -551,14 +552,14 @@ final class FMSynthEngine: @unchecked Sendable {
 
     // MARK: - MIDI handling (must be called under lock)
 
-    private func doNoteOn(_ note: UInt8, velocity: UInt8) {
+    private func doNoteOn(_ note: UInt8, velocity16: UInt16) {
         var target = 0
         for i in 0..<kMaxVoices {
             voices[i].checkActive()
             if !voices[i].active { target = i; break }
         }
         voices[target].algorithm = algorithm
-        voices[target].noteOn(note, velocity: velocity)
+        voices[target].noteOn(note, velocity16: velocity16)
         if pitchBendFactor != 1.0 {
             voices[target].applyPitchBend(pitchBendFactor)
         }
@@ -572,10 +573,10 @@ final class FMSynthEngine: @unchecked Sendable {
         }
     }
 
-    private func doControlChange(_ cc: UInt8, value: UInt8) {
+    private func doControlChange(_ cc: UInt8, value32: UInt32) {
         switch cc {
-        case 64: // Sustain pedal
-            let on = value >= 64
+        case 64: // Sustain pedal: 32-bit threshold at 0x40000000
+            let on = value32 >= 0x40000000
             sustainPedalOn = on
             if !on {
                 // Release all sustained voices
@@ -590,10 +591,10 @@ final class FMSynthEngine: @unchecked Sendable {
         }
     }
 
-    private func doPitchBend(lsb: UInt8, msb: UInt8) {
-        // 14-bit value: 0..16383, center=8192
-        let raw = (Int(msb) << 7) | Int(lsb)
-        let semitones = Float(raw - 8192) / 8192.0 * 2.0  // ±2 semitones
+    private func doPitchBend32(_ value: UInt32) {
+        // 32-bit unsigned: center = 0x80000000
+        let signed = Int64(value) - 0x80000000
+        let semitones = Float(signed) / Float(0x80000000) * 2.0  // ±2 semitones
         pitchBendFactor = powf(2.0, semitones / 12.0)
         for i in 0..<kMaxVoices {
             if voices[i].active {

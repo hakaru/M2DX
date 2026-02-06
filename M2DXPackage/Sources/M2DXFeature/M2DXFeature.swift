@@ -59,17 +59,17 @@ public struct M2DXRootView: View {
             selectedPreset = initPreset
 
             await audioEngine.start()
-            midiInput.onNoteOn = { note, velocity in
-                audioEngine.noteOn(note, velocity: velocity)
+            midiInput.onNoteOn = { note, velocity16 in
+                audioEngine.noteOn(note, velocity16: velocity16)
             }
             midiInput.onNoteOff = { note in
                 audioEngine.noteOff(note)
             }
-            midiInput.onControlChange = { controller, value in
-                audioEngine.controlChange(controller, value: value)
+            midiInput.onControlChange = { controller, value32 in
+                audioEngine.controlChange(controller, value32: value32)
             }
-            midiInput.onPitchBend = { lsb, msb in
-                audioEngine.pitchBend(lsb: lsb, msb: msb)
+            midiInput.onPitchBend = { value32 in
+                audioEngine.pitchBend(value32)
             }
             midiInput.start()
 
@@ -299,7 +299,7 @@ public struct M2DXRootView: View {
                     octave: $keyboardOctave,
                     octaveCount: 2,
                     onNoteOn: { note, velocity in
-                        audioEngine.noteOn(note, velocity: velocity)
+                        audioEngine.noteOn(note, velocity16: UInt16(velocity) << 9)
                     },
                     onNoteOff: { note in
                         audioEngine.noteOff(note)

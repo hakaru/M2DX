@@ -56,17 +56,17 @@ public final class MIDIInputManager {
     /// MIDI receive channel (0 = Omni, 1-16 = specific)
     public var receiveChannel: Int = 0
 
-    /// Callback for note on events
-    public var onNoteOn: ((UInt8, UInt8) -> Void)?
+    /// Callback for note on events (note, velocity16)
+    public var onNoteOn: ((UInt8, UInt16) -> Void)?
 
     /// Callback for note off events
     public var onNoteOff: ((UInt8) -> Void)?
 
-    /// Callback for control change events
-    public var onControlChange: ((UInt8, UInt8) -> Void)?
+    /// Callback for control change events (cc, value32)
+    public var onControlChange: ((UInt8, UInt32) -> Void)?
 
-    /// Callback for pitch bend events (lsb, msb)
-    public var onPitchBend: ((UInt8, UInt8) -> Void)?
+    /// Callback for pitch bend events (value32, center=0x80000000)
+    public var onPitchBend: ((UInt32) -> Void)?
 
     // MARK: - Debug Info (visible on UI)
 
@@ -154,6 +154,9 @@ public final class MIDIInputManager {
                         if let resp = self.peResponder {
                             await resp.handleMessage(data)
                         }
+                    } else if received.umpWord1 != 0 {
+                        // MIDI 2.0 path: decode full-precision values from UMP words
+                        await self.handleUMPData(received.umpWord1, word2: received.umpWord2, fallbackData: data)
                     } else {
                         await self.handleReceivedData(data)
                     }
@@ -253,7 +256,60 @@ public final class MIDIInputManager {
 
     // MARK: - Event Handling
 
-    /// Handle raw MIDI bytes received from CoreMIDITransport
+    /// Handle MIDI 2.0 UMP words with full precision
+    /// Already on MainActor (class is @MainActor)
+    private func handleUMPData(_ word1: UInt32, word2: UInt32, fallbackData: [UInt8]) {
+        let status = UInt8((word1 >> 20) & 0x0F)
+        let channel = UInt8((word1 >> 16) & 0x0F)
+        let byte3 = UInt8((word1 >> 8) & 0xFF)   // note or controller
+
+        // Channel filter: 0 = Omni (accept all), 1-16 = specific
+        let passesFilter = receiveChannel == 0 || Int(channel) + 1 == receiveChannel
+
+        switch status {
+        case 0x9: // Note On (16-bit velocity in upper 16 of word2)
+            let vel16 = UInt16((word2 >> 16) & 0xFFFF)
+            debugLastEvent = "NoteOn(UMP) ch=\(channel) n=\(byte3) v16=\(vel16)"
+            if passesFilter {
+                if vel16 == 0 {
+                    onNoteOff?(byte3)
+                } else {
+                    onNoteOn?(byte3, vel16)
+                }
+            }
+
+        case 0x8: // Note Off
+            debugLastEvent = "NoteOff(UMP) ch=\(channel) n=\(byte3)"
+            if passesFilter {
+                onNoteOff?(byte3)
+            }
+
+        case 0xB: // Control Change (32-bit value)
+            let val32 = word2
+            debugLastEvent = "CC(UMP) ch=\(channel) cc=\(byte3) v32=\(val32)"
+            if passesFilter {
+                onControlChange?(byte3, val32)
+                if byte3 == 123 {
+                    for n: UInt8 in 0...127 {
+                        onNoteOff?(n)
+                    }
+                }
+            }
+
+        case 0xE: // Pitch Bend (32-bit unsigned, center=0x80000000)
+            let val32 = word2
+            debugLastEvent = "PB(UMP) ch=\(channel) v32=\(val32)"
+            if passesFilter {
+                onPitchBend?(val32)
+            }
+
+        default:
+            // For unhandled UMP types, fall back to MIDI 1.0 byte parsing
+            handleReceivedData(fallbackData)
+        }
+    }
+
+    /// Handle raw MIDI bytes received from CoreMIDITransport (MIDI 1.0 fallback)
     /// Already on MainActor (class is @MainActor, called via await self.handleReceivedData)
     private func handleReceivedData(_ data: [UInt8]) {
         // Process MIDI 1.0 byte stream (most common from CoreMIDI PacketList)
@@ -283,7 +339,9 @@ public final class MIDIInputManager {
                     if velocity == 0 {
                         onNoteOff?(note)
                     } else {
-                        onNoteOn?(note, velocity)
+                        // Upscale 7-bit → 16-bit velocity
+                        let vel16 = UInt16(velocity) << 9
+                        onNoteOn?(note, vel16)
                     }
                 }
                 offset += 3
@@ -301,7 +359,9 @@ public final class MIDIInputManager {
                 let controller = data[offset + 1]
                 let value = data[offset + 2]
                 if passesFilter {
-                    onControlChange?(controller, value)
+                    // Upscale 7-bit → 32-bit CC value
+                    let val32 = UInt32(value) << 25
+                    onControlChange?(controller, val32)
 
                     // CC 123 = All Notes Off
                     if controller == 123 {
@@ -318,7 +378,10 @@ public final class MIDIInputManager {
                 let msb = data[offset + 2]
                 debugLastEvent = "PitchBend ch=\(channel) lsb=\(lsb) msb=\(msb)"
                 if passesFilter {
-                    onPitchBend?(lsb, msb)
+                    // Upscale 14-bit → 32-bit pitch bend
+                    let raw14 = (UInt32(msb) << 7) | UInt32(lsb)
+                    let val32 = raw14 << 18
+                    onPitchBend?(val32)
                 }
                 offset += 3
 

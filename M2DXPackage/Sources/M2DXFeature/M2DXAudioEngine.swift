@@ -396,11 +396,11 @@ public final class M2DXAudioEngine {
 
     // MARK: - MIDI Note Control
 
-    /// Send note on event
-    public func noteOn(_ note: UInt8, velocity: UInt8 = 100) {
+    /// Send note on event (16-bit velocity, default 0x7F00 ≈ MIDI 1.0 velocity 127)
+    public func noteOn(_ note: UInt8, velocity16: UInt16 = 0x7F00) {
         guard isRunning else { return }
         activeNotes.insert(note)
-        synth.midiQueue.enqueue(MIDIEvent(kind: .noteOn, data1: note, data2: velocity))
+        synth.midiQueue.enqueue(MIDIEvent(kind: .noteOn, data1: note, data2: UInt32(velocity16)))
     }
 
     /// Send note off event
@@ -410,16 +410,16 @@ public final class M2DXAudioEngine {
         synth.midiQueue.enqueue(MIDIEvent(kind: .noteOff, data1: note, data2: 0))
     }
 
-    /// Send control change event
-    public func controlChange(_ controller: UInt8, value: UInt8) {
+    /// Send control change event (32-bit value)
+    public func controlChange(_ controller: UInt8, value32: UInt32) {
         guard isRunning else { return }
-        synth.midiQueue.enqueue(MIDIEvent(kind: .controlChange, data1: controller, data2: value))
+        synth.midiQueue.enqueue(MIDIEvent(kind: .controlChange, data1: controller, data2: value32))
     }
 
-    /// Send pitch bend event (lsb/msb as 14-bit value)
-    public func pitchBend(lsb: UInt8, msb: UInt8) {
+    /// Send pitch bend event (32-bit unsigned, center=0x80000000)
+    public func pitchBend(_ value32: UInt32) {
         guard isRunning else { return }
-        synth.midiQueue.enqueue(MIDIEvent(kind: .pitchBend, data1: lsb, data2: msb))
+        synth.midiQueue.enqueue(MIDIEvent(kind: .pitchBend, data1: 0, data2: value32))
     }
 
     /// Send all notes off
