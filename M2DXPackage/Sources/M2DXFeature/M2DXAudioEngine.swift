@@ -410,6 +410,18 @@ public final class M2DXAudioEngine {
         synth.midiQueue.enqueue(MIDIEvent(kind: .noteOff, data1: note, data2: 0))
     }
 
+    /// Send control change event
+    public func controlChange(_ controller: UInt8, value: UInt8) {
+        guard isRunning else { return }
+        synth.midiQueue.enqueue(MIDIEvent(kind: .controlChange, data1: controller, data2: value))
+    }
+
+    /// Send pitch bend event (lsb/msb as 14-bit value)
+    public func pitchBend(lsb: UInt8, msb: UInt8) {
+        guard isRunning else { return }
+        synth.midiQueue.enqueue(MIDIEvent(kind: .pitchBend, data1: lsb, data2: msb))
+    }
+
     /// Send all notes off
     public func allNotesOff() {
         for note in activeNotes {

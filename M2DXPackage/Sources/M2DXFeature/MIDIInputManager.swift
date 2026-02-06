@@ -65,6 +65,9 @@ public final class MIDIInputManager {
     /// Callback for control change events
     public var onControlChange: ((UInt8, UInt8) -> Void)?
 
+    /// Callback for pitch bend events (lsb, msb)
+    public var onPitchBend: ((UInt8, UInt8) -> Void)?
+
     // MARK: - Debug Info (visible on UI)
 
     /// Debug: detected MIDI source names at connect time
@@ -310,6 +313,13 @@ public final class MIDIInputManager {
                 offset += 3
 
             case 0xE: // Pitch Bend
+                guard offset + 2 < data.count else { break }
+                let lsb = data[offset + 1]
+                let msb = data[offset + 2]
+                debugLastEvent = "PitchBend ch=\(channel) lsb=\(lsb) msb=\(msb)"
+                if passesFilter {
+                    onPitchBend?(lsb, msb)
+                }
                 offset += 3
 
             case 0xC, 0xD: // Program Change, Channel Pressure

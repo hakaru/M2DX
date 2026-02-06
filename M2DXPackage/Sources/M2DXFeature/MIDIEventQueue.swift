@@ -11,6 +11,7 @@ struct MIDIEvent: Sendable {
         case noteOn = 0x90
         case noteOff = 0x80
         case controlChange = 0xB0
+        case pitchBend = 0xE0
     }
 
     let kind: Kind

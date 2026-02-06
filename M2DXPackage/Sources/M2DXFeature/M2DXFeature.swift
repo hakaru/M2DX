@@ -65,6 +65,12 @@ public struct M2DXRootView: View {
             midiInput.onNoteOff = { note in
                 audioEngine.noteOff(note)
             }
+            midiInput.onControlChange = { controller, value in
+                audioEngine.controlChange(controller, value: value)
+            }
+            midiInput.onPitchBend = { lsb, msb in
+                audioEngine.pitchBend(lsb: lsb, msb: msb)
+            }
             midiInput.start()
 
             while !Task.isCancelled {

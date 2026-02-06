@@ -56,7 +56,11 @@ private struct Envelope {
         currentLevel = 0
     }
 
-    mutating func noteOff() {
+    mutating func noteOff(held: Bool = false) {
+        if held {
+            // Sustain pedal is down — stay in sustain stage
+            return
+        }
         if stage != .idle { stage = .release }
     }
 
@@ -127,11 +131,18 @@ private struct FMOp {
         detune = powf(2.0, cents / 1200.0)
     }
 
+    var baseFrequency: Float = 440  // store base frequency for pitch bend
+
     mutating func noteOn(baseFreq: Float) {
+        baseFrequency = baseFreq
         frequency = baseFreq * ratio * detune
         phaseInc = frequency / sampleRate
         env.noteOn()
         phase = 0; prev1 = 0; prev2 = 0
+    }
+
+    mutating func applyPitchBend(_ factor: Float) {
+        phaseInc = baseFrequency * ratio * detune * factor / sampleRate
     }
 
     mutating func noteOff() { env.noteOff() }
@@ -257,7 +268,9 @@ private struct Voice {
     var note: UInt8 = 0
     var velScale: Float = 1.0
     var active = false
+    var sustained = false  // held by sustain pedal after noteOff
     var algorithm: Int = 0
+    var pitchBendFactor: Float = 1.0  // pitch bend multiplier (1.0 = no bend)
 
     mutating func checkActive() {
         if active {
@@ -290,13 +303,35 @@ private struct Voice {
         withOp(5) { $0.noteOn(baseFreq: freq) }
     }
 
-    mutating func noteOff() {
+    mutating func noteOff(held: Bool = false) {
+        if held {
+            sustained = true
+            return
+        }
+        sustained = false
         withOp(0) { $0.noteOff() }
         withOp(1) { $0.noteOff() }
         withOp(2) { $0.noteOff() }
         withOp(3) { $0.noteOff() }
         withOp(4) { $0.noteOff() }
         withOp(5) { $0.noteOff() }
+    }
+
+    mutating func releaseSustain() {
+        if sustained {
+            sustained = false
+            noteOff()
+        }
+    }
+
+    mutating func applyPitchBend(_ factor: Float) {
+        pitchBendFactor = factor
+        withOp(0) { $0.applyPitchBend(factor) }
+        withOp(1) { $0.applyPitchBend(factor) }
+        withOp(2) { $0.applyPitchBend(factor) }
+        withOp(3) { $0.applyPitchBend(factor) }
+        withOp(4) { $0.applyPitchBend(factor) }
+        withOp(5) { $0.applyPitchBend(factor) }
     }
 
     // MARK: - Table-driven process
@@ -402,6 +437,8 @@ final class FMSynthEngine: @unchecked Sendable {
     private var sampleRate: Float = 44100
     private var masterVolume: Float = 0.7
     private var algorithm: Int = 0
+    private var sustainPedalOn: Bool = false
+    private var pitchBendFactor: Float = 1.0  // current pitch bend (semitones ±2)
 
     /// MIDI event queue (UI → audio)
     let midiQueue = MIDIEventQueue()
@@ -481,7 +518,9 @@ final class FMSynthEngine: @unchecked Sendable {
             case .noteOff:
                 doNoteOff(event.data1)
             case .controlChange:
-                if event.data1 == 123 { doAllNotesOff() }
+                doControlChange(event.data1, value: event.data2)
+            case .pitchBend:
+                doPitchBend(lsb: event.data1, msb: event.data2)
             }
         }
 
@@ -520,17 +559,54 @@ final class FMSynthEngine: @unchecked Sendable {
         }
         voices[target].algorithm = algorithm
         voices[target].noteOn(note, velocity: velocity)
+        if pitchBendFactor != 1.0 {
+            voices[target].applyPitchBend(pitchBendFactor)
+        }
     }
 
     private func doNoteOff(_ note: UInt8) {
         for i in 0..<kMaxVoices {
             if voices[i].active && voices[i].note == note {
-                voices[i].noteOff()
+                voices[i].noteOff(held: sustainPedalOn)
+            }
+        }
+    }
+
+    private func doControlChange(_ cc: UInt8, value: UInt8) {
+        switch cc {
+        case 64: // Sustain pedal
+            let on = value >= 64
+            sustainPedalOn = on
+            if !on {
+                // Release all sustained voices
+                for i in 0..<kMaxVoices {
+                    voices[i].releaseSustain()
+                }
+            }
+        case 123: // All Notes Off
+            doAllNotesOff()
+        default:
+            break
+        }
+    }
+
+    private func doPitchBend(lsb: UInt8, msb: UInt8) {
+        // 14-bit value: 0..16383, center=8192
+        let raw = (Int(msb) << 7) | Int(lsb)
+        let semitones = Float(raw - 8192) / 8192.0 * 2.0  // ±2 semitones
+        pitchBendFactor = powf(2.0, semitones / 12.0)
+        for i in 0..<kMaxVoices {
+            if voices[i].active {
+                voices[i].applyPitchBend(pitchBendFactor)
             }
         }
     }
 
     private func doAllNotesOff() {
-        for i in 0..<kMaxVoices { voices[i].noteOff() }
+        sustainPedalOn = false
+        for i in 0..<kMaxVoices {
+            voices[i].sustained = false
+            voices[i].noteOff()
+        }
     }
 }

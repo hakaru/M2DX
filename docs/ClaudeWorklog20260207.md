@@ -334,3 +334,40 @@
 決定事項: リファクタリング完了、コミット実行
 次のTODO: コミット
 ---
+
+---
+2026-02-07 06:36
+作業項目: CC・ペダル・ピッチベンド未実装の調査
+追加機能の説明:
+- ユーザー報告: CC情報、ペダル、ベンド等が反応しない
+- 調査結果:
+  1. onControlChange コールバックがM2DXRootViewで未接続（NoteOn/Offのみ接続済み）
+  2. FMSynthEngineはCC123(All Notes Off)のみ処理、CC64(sustain)等は無視
+  3. ピッチベンド(0xE)はMIDIInputManagerで3バイトスキップするのみ、コールバックなし
+  4. サスティンペダル: Envelope.sustainフェーズは空break
+- 必要な実装:
+  1. M2DXRootViewでonControlChangeコールバック接続
+  2. FMSynthEngineでCC64(sustain)対応
+  3. ピッチベンド対応（コールバック追加、MIDIEventQueue拡張、FMOp周波数調整）
+決定事項: CC・ペダル・ベンドを実装する
+次のTODO: 実装開始
+---
+
+---
+2026-02-07 06:42
+作業項目: CC・サスティンペダル・ピッチベンド実装完了
+追加機能の説明:
+- MIDIEventQueue: pitchBend イベント種別追加
+- FMSynthEngine:
+  - サスティンペダル(CC64): sustainPedalOn フラグ管理、ペダルOFF時にsustained voiceをrelease
+  - ピッチベンド: 14bit値→±2半音のpowf変換、全アクティブボイスのphaseIncを動的更新
+  - doControlChange: CC64(sustain), CC123(allNotesOff) を処理
+- FMOp: baseFrequency保持、applyPitchBend()で周波数再計算
+- Voice: sustained フラグ、pitchBendFactor、releaseSustain()、applyPitchBend()
+- M2DXAudioEngine: controlChange(), pitchBend() メソッド追加
+- MIDIInputManager: onPitchBend コールバック追加、ピッチベンドデータ解析(lsb/msb)
+- M2DXFeature: onControlChange, onPitchBend コールバック接続
+- iOS実機ビルド・インストール・動作確認OK
+決定事項: CC・ペダル・ベンド実装完了、実機確認済み
+次のTODO: コミット
+---
