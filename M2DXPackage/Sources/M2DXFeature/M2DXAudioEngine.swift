@@ -1,4 +1,8 @@
 import AVFoundation
+#if os(macOS)
+import CoreAudio
+#endif
+import M2DXCore
 import os
 
 // MARK: - Audio Engine Errors
@@ -47,6 +51,7 @@ public final class M2DXAudioEngine {
     private var playerNode: AVAudioPlayerNode?
     private let synth = FMSynthEngine()
     private var renderState: RenderState?
+    private var configObservers: [any NSObjectProtocol] = []
 
     /// Buffer configuration
     private let bufferFrameCount: AVAudioFrameCount = 512
@@ -83,6 +88,9 @@ public final class M2DXAudioEngine {
     /// Error message if initialization failed
     public private(set) var errorMessage: String?
 
+    /// Current audio output device name
+    public private(set) var currentOutputDevice: String = "Default"
+
     // MARK: - Initialization
 
     public init() {}
@@ -107,6 +115,12 @@ public final class M2DXAudioEngine {
 
     /// Stop the audio engine and clean up resources
     public func stop() {
+        // Remove configuration change observers
+        for observer in configObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        configObservers.removeAll()
+
         // Stop render thread
         renderState?.isRunning = false
         renderState = nil
@@ -156,6 +170,9 @@ public final class M2DXAudioEngine {
         // Use output node's format (deinterleaved stereo)
         let outputFormat = engine.outputNode.outputFormat(forBus: 0)
         let sampleRate = outputFormat.sampleRate
+
+        // Update current output device name
+        updateOutputDeviceName()
 
         // Configure synth
         synth.setSampleRate(Float(sampleRate))
@@ -214,7 +231,181 @@ public final class M2DXAudioEngine {
         thread.name = "M2DX-Render"
         thread.qualityOfService = .userInteractive
         thread.start()
+
+        // Monitor audio configuration changes (output device switch on macOS, route change on iOS)
+        configObservers.append(NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleConfigurationChange()
+            }
+        })
+
+        #if os(iOS)
+        // Monitor iOS audio route changes (headphones, Bluetooth, AirPlay)
+        configObservers.append(NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            guard let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let changeReason = AVAudioSession.RouteChangeReason(rawValue: reason) else { return }
+
+            switch changeReason {
+            case .newDeviceAvailable, .oldDeviceUnavailable, .override:
+                Task { @MainActor [weak self] in
+                    self?.handleConfigurationChange()
+                }
+            default:
+                break
+            }
+        })
+
+        // Monitor iOS audio interruptions (phone calls, alarms, etc.)
+        configObservers.append(NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            guard let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
+            if type == .ended {
+                Task { @MainActor [weak self] in
+                    self?.handleConfigurationChange()
+                }
+            }
+        })
+        #endif
     }
+
+    /// Handle audio configuration change (e.g. output device switched)
+    private func handleConfigurationChange() {
+        print("M2DXAudioEngine: Configuration changed, restarting engine...")
+        let wasRunning = isRunning
+        stop()
+        if wasRunning {
+            Task {
+                await start()
+            }
+        }
+    }
+
+    /// Update the current output device name
+    private func updateOutputDeviceName() {
+        #if os(iOS)
+        let route = AVAudioSession.sharedInstance().currentRoute
+        if let output = route.outputs.first {
+            currentOutputDevice = output.portName
+        } else {
+            currentOutputDevice = "Speaker"
+        }
+        #elseif os(macOS)
+        currentOutputDevice = macOSOutputDeviceName() ?? "Default"
+        #endif
+    }
+
+    #if os(macOS)
+    /// Get the current macOS default output device name via CoreAudio
+    private func macOSOutputDeviceName() -> String? {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
+        )
+        guard status == noErr else { return nil }
+
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceNameCFString,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: CFString = "" as CFString
+        var nameSize = UInt32(MemoryLayout<CFString>.size)
+        let nameStatus = AudioObjectGetPropertyData(
+            deviceID, &nameAddress, 0, nil, &nameSize, &name
+        )
+        guard nameStatus == noErr else { return nil }
+        return name as String
+    }
+
+    /// List all available macOS output devices
+    public func listMacOutputDevices() -> [(id: AudioDeviceID, name: String)] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
+        )
+        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+        var devices = [AudioDeviceID](repeating: 0, count: count)
+        AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices
+        )
+
+        var result: [(id: AudioDeviceID, name: String)] = []
+        for deviceID in devices {
+            // Check if device has output streams
+            var streamAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreams,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var streamSize: UInt32 = 0
+            AudioObjectGetPropertyDataSize(deviceID, &streamAddress, 0, nil, &streamSize)
+            guard streamSize > 0 else { continue }
+
+            // Get device name
+            var nameAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceNameCFString,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var name: CFString = "" as CFString
+            var nameSize = UInt32(MemoryLayout<CFString>.size)
+            let status = AudioObjectGetPropertyData(
+                deviceID, &nameAddress, 0, nil, &nameSize, &name
+            )
+            if status == noErr {
+                result.append((id: deviceID, name: name as String))
+            }
+        }
+        return result
+    }
+
+    /// Set macOS output device by AudioDeviceID
+    public func setMacOutputDevice(_ deviceID: AudioDeviceID) {
+        guard let engine = audioEngine else { return }
+        let outputNode = engine.outputNode
+        let outputUnit = outputNode.audioUnit!
+
+        var id = deviceID
+        let status = AudioUnitSetProperty(
+            outputUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &id,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status == noErr {
+            // Restart to apply the new device
+            handleConfigurationChange()
+        } else {
+            print("M2DXAudioEngine: Failed to set output device: \(status)")
+        }
+    }
+    #endif
 
     // MARK: - Render Loop (runs on dedicated thread)
 
@@ -327,5 +518,45 @@ public final class M2DXAudioEngine {
     public func setOperatorEGLevels(_ opIndex: Int, l1: Float, l2: Float, l3: Float, l4: Float) {
         guard opIndex >= 0 && opIndex < 6 else { return }
         synth.setOperatorEGLevels(opIndex, l1: l1, l2: l2, l3: l3, l4: l4)
+    }
+
+    // MARK: - Preset Loading
+
+    /// Load a DX7 preset, applying all parameters to the synth engine
+    public func loadPreset(_ preset: DX7Preset) {
+        // Stop all playing notes first
+        allNotesOff()
+
+        // Set algorithm
+        algorithm = preset.algorithm
+
+        // Apply per-operator parameters
+        for (i, op) in preset.operators.enumerated() {
+            guard i < 6 else { break }
+
+            // Level
+            synth.setOperatorLevel(i, level: op.normalizedLevel)
+            if i < operatorLevels.count {
+                operatorLevels[i] = op.normalizedLevel
+            }
+
+            // Frequency ratio
+            synth.setOperatorRatio(i, ratio: op.frequencyRatio)
+
+            // Detune
+            synth.setOperatorDetune(i, cents: op.detuneCents)
+
+            // Feedback (from the preset's global feedback, applied to the operator that has it)
+            let fb = op.feedback > 0 ? Float(op.feedback) / 7.0 : 0
+            synth.setOperatorFeedback(i, feedback: fb)
+
+            // EG rates (DX7 native 0-99 values)
+            let rates = op.egRatesDX7
+            synth.setOperatorEGRates(i, r1: rates.0, r2: rates.1, r3: rates.2, r4: rates.3)
+
+            // EG levels (normalized 0.0-1.0)
+            let levels = op.egLevelsNormalized
+            synth.setOperatorEGLevels(i, l1: levels.0, l2: levels.1, l3: levels.2, l4: levels.3)
+        }
     }
 }

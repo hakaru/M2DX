@@ -2,6 +2,7 @@
 // Settings screen: Bluetooth MIDI, MIDI channel, tuning, audio, etc.
 
 import SwiftUI
+import AVFoundation
 #if os(iOS)
 import CoreAudioKit
 #endif
@@ -83,6 +84,9 @@ struct SettingsView: View {
             .foregroundStyle(.primary)
             #endif
 
+            // MIDI Input Source selection
+            MIDIInputSourcePicker(midiInput: midiInput)
+
             // MIDI Channel
             Picker(selection: $midiChannel) {
                 Text("Omni (All)").tag(0)
@@ -120,6 +124,25 @@ struct SettingsView: View {
                     in: 0...1
                 )
             }
+
+            // Output device
+            HStack {
+                Label("Output", systemImage: "speaker.badge.exclamationmark")
+                Spacer()
+                Text(audioEngine.currentOutputDevice)
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+
+            #if os(iOS)
+            // iOS: AirPlay / Bluetooth output route picker
+            AudioRoutePickerRow()
+            #endif
+
+            #if os(macOS)
+            // macOS: Output device selection
+            MacOutputDevicePicker(audioEngine: audioEngine)
+            #endif
 
             // Engine status
             HStack {
@@ -245,6 +268,117 @@ struct SettingsView: View {
         }
     }
 }
+
+// MARK: - MIDI Input Source Picker
+
+/// Picker for selecting which MIDI input device to receive from
+struct MIDIInputSourcePicker: View {
+    var midiInput: MIDIInputManager
+    @State private var selectedName: String = "All"
+
+    var body: some View {
+        Picker(selection: Binding(
+            get: { selectedName },
+            set: { name in
+                selectedName = name
+                if name == "All" {
+                    midiInput.selectSource(.all)
+                } else {
+                    midiInput.selectSource(.specific(name))
+                }
+            }
+        )) {
+            Text("All Sources").tag("All")
+            ForEach(midiInput.availableSources) { source in
+                HStack {
+                    Text(source.name)
+                    if source.isOnline {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 6))
+                            .foregroundStyle(.green)
+                    }
+                }
+                .tag(source.name)
+            }
+        } label: {
+            Label("MIDI Input", systemImage: "cable.connector")
+        }
+        .onAppear {
+            midiInput.refreshDeviceList()
+            switch midiInput.selectedSourceMode {
+            case .all:
+                selectedName = "All"
+            case .specific(let name):
+                selectedName = name
+            }
+        }
+    }
+}
+
+// MARK: - Audio Route Picker (iOS)
+
+#if os(iOS)
+import AVKit
+
+/// Row that embeds the system AVRoutePickerView for AirPlay / Bluetooth output selection
+struct AudioRoutePickerRow: View {
+    var body: some View {
+        HStack {
+            Label("Output Route", systemImage: "airplayaudio")
+            Spacer()
+            RoutePickerViewWrapper()
+                .frame(width: 40, height: 30)
+        }
+    }
+}
+
+/// Wraps AVRoutePickerView for SwiftUI
+struct RoutePickerViewWrapper: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.tintColor = .systemCyan
+        picker.activeTintColor = .systemCyan
+        return picker
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
+#endif
+
+// MARK: - Output Device Picker (macOS)
+
+#if os(macOS)
+import CoreAudio
+
+/// macOS output device picker using CoreAudio device enumeration
+struct MacOutputDevicePicker: View {
+    var audioEngine: M2DXAudioEngine
+    @State private var devices: [(id: AudioDeviceID, name: String)] = []
+    @State private var selectedDeviceName: String = ""
+
+    var body: some View {
+        Picker(selection: Binding(
+            get: { selectedDeviceName },
+            set: { name in
+                selectedDeviceName = name
+                if let device = devices.first(where: { $0.name == name }) {
+                    audioEngine.setMacOutputDevice(device.id)
+                }
+            }
+        )) {
+            ForEach(devices, id: \.name) { device in
+                Text(device.name).tag(device.name)
+            }
+        } label: {
+            Label("Output Device", systemImage: "hifispeaker")
+        }
+        .onAppear {
+            devices = audioEngine.listMacOutputDevices()
+            selectedDeviceName = audioEngine.currentOutputDevice
+        }
+    }
+}
+#endif
 
 // MARK: - Bluetooth MIDI View (iOS only)
 

@@ -4,6 +4,21 @@
 import Foundation
 import MIDI2Kit
 
+// MARK: - MIDI Source Types
+
+/// Represents a MIDI input source for the selection UI
+public struct MIDISourceItem: Identifiable, Hashable, Sendable {
+    public let id: String       // unique identifier (name-based)
+    public let name: String     // display name
+    public let isOnline: Bool   // connection status
+}
+
+/// MIDI source selection mode
+public enum MIDISourceMode: Equatable, Sendable {
+    case all                    // receive from all sources (Omni)
+    case specific(String)       // receive from a specific source by name
+}
+
 // MARK: - MIDI Input Manager
 
 /// Manages external MIDI device connections and routes events to the audio engine
@@ -24,6 +39,12 @@ public final class MIDIInputManager {
 
     /// Connected device names
     public private(set) var connectedDevices: [String] = []
+
+    /// Available MIDI source devices (for selection UI)
+    public private(set) var availableSources: [MIDISourceItem] = []
+
+    /// Selected source mode: .all or .specific(name)
+    public var selectedSourceMode: MIDISourceMode = .all
 
     /// Last error message
     public private(set) var errorMessage: String?
@@ -52,11 +73,22 @@ public final class MIDIInputManager {
             let midi = try CoreMIDITransport(clientName: "M2DX")
             self.transport = midi
 
-            // Connect to all available MIDI sources
             let transportRef = midi
+            let mode = selectedSourceMode
             receiveTask = Task { [weak self] in
-                // Connect sources
-                try? await transportRef.connectToAllSources()
+                // Connect based on selected mode
+                switch mode {
+                case .all:
+                    try? await transportRef.connectToAllSources()
+                case .specific(let name):
+                    let sources = await transportRef.sources
+                    if let match = sources.first(where: { $0.name == name }) {
+                        try? await transportRef.connect(to: match.sourceID)
+                    } else {
+                        // Fallback to all if named source not found
+                        try? await transportRef.connectToAllSources()
+                    }
+                }
 
                 // Listen for MIDI data
                 for await received in transportRef.received {
@@ -72,6 +104,13 @@ public final class MIDIInputManager {
             errorMessage = "MIDI setup failed: \(error.localizedDescription)"
             isConnected = false
         }
+    }
+
+    /// Switch to a different MIDI source (restarts connection)
+    public func selectSource(_ mode: MIDISourceMode) {
+        selectedSourceMode = mode
+        stop()
+        start()
     }
 
     /// Stop MIDI input manager
@@ -96,6 +135,7 @@ public final class MIDIInputManager {
     public func refreshDeviceList() {
         guard let transport else {
             connectedDevices = []
+            availableSources = []
             return
         }
 
@@ -103,6 +143,13 @@ public final class MIDIInputManager {
             let sources = await transport.sources
             await MainActor.run {
                 self.connectedDevices = sources.map { $0.name }
+                self.availableSources = sources.map { source in
+                    MIDISourceItem(
+                        id: source.name,
+                        name: source.name,
+                        isOnline: source.isOnline
+                    )
+                }
             }
         }
     }

@@ -15,7 +15,9 @@ public struct M2DXRootView: View {
     @State private var keyboardOctave: Int = 4
     @State private var showAlgorithmSelector = false
     @State private var showSettings = false
+    @State private var showPresetPicker = false
     @State private var showKeyboard = true
+    @State private var selectedPreset: DX7Preset?
     @State private var midiChannel: Int = 0
     @State private var masterTuning: Double = 0
     @State private var feedbackValues: [Float] = Array(repeating: 0, count: 6)
@@ -51,6 +53,11 @@ public struct M2DXRootView: View {
         }
         .background(Color.m2dxBackground)
         .task {
+            // Apply INIT VOICE preset on launch
+            let initPreset = DX7FactoryPresets.initVoice
+            applyPreset(initPreset)
+            selectedPreset = initPreset
+
             await audioEngine.start()
             midiInput.onNoteOn = { note, velocity in
                 audioEngine.noteOn(note, velocity: velocity)
@@ -72,6 +79,14 @@ public struct M2DXRootView: View {
                 set: { audioEngine.algorithm = $0 }
             ))
         }
+        .sheet(isPresented: $showPresetPicker) {
+            PresetPickerView(
+                selectedPreset: $selectedPreset,
+                onSelect: { preset in
+                    applyPreset(preset)
+                }
+            )
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView(
                 audioEngine: audioEngine,
@@ -89,6 +104,19 @@ public struct M2DXRootView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
+            // Preset name
+            Button {
+                showPresetPicker = true
+            } label: {
+                Text(selectedPreset?.name ?? "INIT VOICE")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.cyan)
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(.cyan.opacity(0.1)))
+            }
+
             // Algorithm
             Button {
                 showAlgorithmSelector = true
@@ -322,6 +350,42 @@ public struct M2DXRootView: View {
                 audioEngine.setOperatorFeedback(opIndex, feedback: Float(newValue))
             }
         )
+    }
+
+    // MARK: - Preset Application
+
+    /// Apply a DX7 preset to the audio engine and update all UI state
+    private func applyPreset(_ preset: DX7Preset) {
+        // Load into audio engine
+        audioEngine.loadPreset(preset)
+
+        // Update UI state to reflect preset parameters
+        for (i, op) in preset.operators.enumerated() {
+            guard i < 6 else { break }
+
+            // Operator parameters
+            operators[i] = OperatorParameters(
+                id: i + 1,
+                level: Double(op.normalizedLevel),
+                frequencyRatio: Double(op.frequencyRatio),
+                detune: Int(op.detuneCents)
+            )
+
+            // Envelope parameters (normalized 0.0-1.0 for UI)
+            operatorEnvelopes[i] = EnvelopeParameters(
+                rate1: Double(op.egRate1) / 99.0,
+                rate2: Double(op.egRate2) / 99.0,
+                rate3: Double(op.egRate3) / 99.0,
+                rate4: Double(op.egRate4) / 99.0,
+                level1: Double(op.egLevel1) / 99.0,
+                level2: Double(op.egLevel2) / 99.0,
+                level3: Double(op.egLevel3) / 99.0,
+                level4: Double(op.egLevel4) / 99.0
+            )
+
+            // Feedback values
+            feedbackValues[i] = op.feedback > 0 ? Float(op.feedback) / 7.0 : 0
+        }
     }
 }
 

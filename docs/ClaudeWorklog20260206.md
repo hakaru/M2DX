@@ -1163,3 +1163,285 @@
 - 実機でMIDI入力テスト
 - 問題なければコミット
 ---
+
+---
+2026-02-06 16:00
+作業項目: セッション引き継ぎ・状況確認
+追加機能の説明:
+- 前セッションからの引き継ぎ（コンテキスト圧縮による新セッション開始）
+- 全タスク完了済みの状態を確認:
+  1. macOSデスクトップスタンドアロン版: 実装・ビルド・動作確認完了
+  2. MIDIKit → MIDI2Kit移行: 実装・ビルド・コミット・プッシュ完了
+- コミット履歴:
+  - 5dda7ae: Add macOS desktop standalone app and DX7 feature enhancements
+  - d43dd4f: Migrate from MIDIKit to MIDI2Kit for MIDI input
+決定事項: 全タスク完了済み、次の指示待ち
+次のTODO:
+- ユーザーからの次の指示を待つ
+- 将来的な候補: MIDI2Kit Property Exchange統合、実機MIDIテスト
+---
+
+---
+2026-02-06 16:03
+作業項目: プリセット機能の計画策定開始
+追加機能の説明:
+- DX7オリジナルプリセットを含むプリセットシステムの設計
+- デフォルトプリセット（DX7音色）の実装
+- プリセット選択UI
+決定事項: プランモードで設計を策定
+次のTODO: コードベース調査→プリセットデータ構造設計→UI計画
+---
+
+---
+2026-02-06 16:17
+作業項目: プリセット機能 実装開始（Step 1-6）
+追加機能の説明:
+- 承認済みプリセット計画に基づき全6ステップを実装開始
+- Step 1: DX7Preset.swift（データモデル + パラメータ変換）
+- Step 2: DX7FactoryPresets.swift（10音色ファクトリプリセット）
+- Step 3: M2DXAudioEngine.swift（loadPresetメソッド追加）
+- Step 4: PresetPickerView.swift（カテゴリ別プリセット選択UI）
+- Step 5: M2DXFeature.swift（プリセット状態管理+ヘッダーボタン+applyPreset）
+- Step 6: ビルド・実機テスト
+決定事項: 計画に従い順次実装
+次のTODO: Step 1 DX7Preset.swift作成から開始
+---
+
+---
+2026-02-06 16:21
+作業項目: プリセット機能 全6ステップ実装完了・実機デプロイ成功
+追加機能の説明:
+- Step 1完了: DX7Preset.swift 新規作成（M2DXCore）
+  - DX7OperatorPreset: DX7ネイティブ値でのオペレーターパラメータ（outputLevel, freqCoarse/Fine, detune, feedback, EG Rate/Level 1-4）
+  - DX7Preset: プリセット本体（name, algorithm, feedback, operators[6], category）
+  - PresetCategory: keys, bass, brass, strings, organ, percussion, woodwind, other
+  - パラメータ変換extension: normalizedLevel, frequencyRatio, detuneCents, normalizedFeedback, egRatesDX7, egLevelsNormalized
+- Step 2完了: DX7FactoryPresets.swift 新規作成（M2DXCore）
+  - 10音色のファクトリプリセット定義:
+    1. INIT VOICE (ALG1, FB0) - 初期化音色
+    2. E.PIANO 1 (ALG5, FB6) - DX7最有名音色
+    3. BASS 1 (ALG5, FB6) - パンチのあるFMベース
+    4. BRASS 1 (ALG22, FB7) - ブラスアンサンブル
+    5. STRINGS 1 (ALG1, FB5) - スローアタックストリングス
+    6. E.ORGAN 1 (ALG32, FB4) - ドローバーオルガン
+    7. MARIMBA (ALG5, FB7) - マレットパーカッション
+    8. HARPSICH 1 (ALG5, FB6) - ハープシコード
+    9. FLUTE 1 (ALG4, FB7) - ブレシーフルート
+    10. CLAV 1 (ALG5, FB6) - クラビネット
+- Step 3完了: M2DXAudioEngine.swift変更
+  - loadPreset(_ preset: DX7Preset) メソッド追加
+  - allNotesOff → algorithm設定 → 全OP一括パラメータ設定
+  - DX7OperatorPresetの変換メソッドで自動変換
+- Step 4完了: PresetPickerView.swift 新規作成（M2DXFeature）
+  - カテゴリ別セクション表示のList
+  - 選択中プリセットにチェックマーク
+  - macOS対応（.frame指定）
+- Step 5完了: M2DXFeature.swift変更
+  - selectedPreset, showPresetPicker ステート追加
+  - ヘッダーバーにプリセット名ボタン追加（ALGボタンの左）
+  - .sheet(isPresented: $showPresetPicker) 追加
+  - applyPreset(_:) メソッド: audioEngine.loadPreset + UI状態反映（operators, operatorEnvelopes, feedbackValues）
+  - 起動時にINIT VOICEプリセット自動適用
+- Step 6完了: ビルド・実機テスト
+  - iOS実機ビルド BUILD SUCCEEDED
+  - Midi (iPhone 14 Pro Max) インストール成功
+  - アプリ起動成功
+新規ファイル:
+  - M2DXPackage/Sources/M2DXCore/DX7Preset.swift
+  - M2DXPackage/Sources/M2DXCore/DX7FactoryPresets.swift
+  - M2DXPackage/Sources/M2DXFeature/PresetPickerView.swift
+変更ファイル:
+  - M2DXPackage/Sources/M2DXFeature/M2DXAudioEngine.swift（loadPreset追加）
+  - M2DXPackage/Sources/M2DXFeature/M2DXFeature.swift（プリセット統合）
+決定事項:
+  - プリセットデータはDX7ネイティブ値で保持し、適用時にM2DX内部値に変換
+  - UIのEnvelopeParameters（0.0-1.0）→ audioEngine.setOperatorEGRates は rate * 99 で変換
+  - プリセットからは直接DX7値を渡す（egRatesDX7メソッド経由）
+次のTODO:
+  - ユーザーに実機で動作確認を依頼
+  - プリセット選択 → 音色切替確認（E.PIANO 1で鍵盤演奏）
+  - 各OPパラメータがUIに正しく反映されることを確認
+  - EGエディタの表示更新を確認
+---
+
+---
+2026-02-06 16:24
+作業項目: macOSビルド成功
+追加機能の説明:
+- M2DXMacスキームでmacOSビルド実行 → BUILD SUCCEEDED
+- プリセット機能がiOS/macOS両方で正常ビルド確認
+決定事項: iOS/macOS両プラットフォームでプリセット機能ビルド成功
+次のTODO: 実機で動作確認
+---
+
+---
+2026-02-06 16:25
+作業項目: macOS版アプリ起動
+追加機能の説明:
+- M2DXMac.app を open コマンドで起動
+決定事項: macOS版起動完了
+次のTODO: ユーザーに動作確認を依頼
+---
+
+---
+2026-02-06 16:36
+作業項目: macOS版オーディオ出力先変更時の問題調査
+追加機能の説明:
+- macOSで音声出力先を変更すると動作しなくなる問題が報告された
+- AVAudioEngineはmacOSで出力デバイスが変更されるとエンジンが停止する既知の動作
+- 対策: AVAudioEngine.configurationChangeNotification を監視してエンジン再起動が必要
+決定事項: M2DXAudioEngineにmacOS出力デバイス変更対応を追加
+次のTODO: configurationChangeNotification監視の実装
+---
+
+---
+2026-02-06 16:37
+作業項目: macOS出力デバイス変更対応完了・再起動
+追加機能の説明:
+- M2DXAudioEngine.swiftに以下を追加:
+  - configObserverプロパティ: NotificationCenter observer保持
+  - .AVAudioEngineConfigurationChange通知の監視（setupAudioEngine末尾）
+  - handleConfigurationChange(): stop() → start() で自動再起動
+  - stop()でconfigObserverの解除処理を追加
+- macOSビルド成功（BUILD SUCCEEDED）
+- アプリ再起動済み
+決定事項: 出力デバイス変更時にエンジン自動再起動する対応を実装
+次のTODO: ユーザーに出力先変更テストを依頼
+---
+
+---
+2026-02-06 16:38
+作業項目: macOS出力デバイス変更対応 動作確認OK
+追加機能の説明:
+- ユーザーがmacOS版で出力先変更テストを実施→正常動作確認
+決定事項: 出力デバイス変更対応は問題なし
+次のTODO: 次の指示待ち
+---
+
+---
+2026-02-06 16:41
+作業項目: iOS出力デバイス変更対応 + iOS/macOS出力デバイス選択UI実装
+追加機能の説明:
+- iOS: AVAudioSession.routeChangeNotification監視でデバイス変更対応
+- iOS: AVRoutePickerView（AirPlay/Bluetooth出力先選択の標準UI）を設定画面に追加
+- macOS: CoreAudioで出力デバイス列挙 + 選択UIを設定画面に追加
+決定事項: 両プラットフォームで出力デバイス選択機能を実装
+次のTODO: 実装開始
+---
+
+---
+2026-02-06 16:44
+作業項目: iOS/macOS出力デバイス変更対応+選択UI完了
+追加機能の説明:
+- M2DXAudioEngine.swift変更:
+  - configObserver → configObservers（配列化、複数通知対応）
+  - iOS: AVAudioSession.routeChangeNotification監視追加
+    - newDeviceAvailable/oldDeviceUnavailable/override でエンジン再起動
+  - iOS: AVAudioSession.interruptionNotification監視追加
+    - 割り込み終了時にエンジン再起動（電話着信等）
+  - currentOutputDeviceプロパティ追加（現在の出力先名を表示）
+  - updateOutputDeviceName(): iOS=AVAudioSession.currentRoute, macOS=CoreAudio
+  - macOS: listMacOutputDevices() — CoreAudioで全出力デバイス列挙
+  - macOS: setMacOutputDevice() — AudioUnitSetPropertyで出力デバイス変更
+  - macOS: macOSOutputDeviceName() — デフォルト出力デバイス名取得
+- SettingsView.swift変更:
+  - Audio Section に出力デバイス名表示を追加
+  - iOS: AudioRoutePickerRow — AVRoutePickerView（AirPlay/Bluetooth出力先選択）
+  - macOS: MacOutputDevicePicker — CoreAudioデバイス一覧Picker
+- ビルド結果:
+  - iOS: BUILD SUCCEEDED → 実機インストール・起動成功
+  - macOS: BUILD SUCCEEDED → アプリ再起動成功
+決定事項:
+  - iOS: AVRoutePickerView（Apple標準UI）で出力先選択
+  - macOS: CoreAudioデバイス列挙+Pickerで出力先選択
+  - 両プラットフォームで出力デバイス変更時に自動復帰
+次のTODO:
+  - ユーザーに動作確認を依頼
+  - iOS: 設定→Output Route ボタンでAirPlay/Bluetooth選択テスト
+  - macOS: 設定→Output Device Pickerでデバイス切替テスト
+---
+
+---
+2026-02-06 16:46
+作業項目: MIDI入力デバイス選択機能の実装
+追加機能の説明:
+- MIDI2Kit CoreMIDITransport API調査完了:
+  - connect(to: MIDISourceID) / disconnect(from:) で個別接続可能
+  - sources: [MIDISourceInfo] で全ソース列挙
+  - MIDISourceInfo: sourceID, name, manufacturer, isOnline, uniqueID
+- MIDIInputManager.swift: 個別ソース接続/切断、availableSources一覧追加
+- SettingsView.swift: MIDI入力デバイス選択UI追加
+決定事項: MIDI2Kit APIを活用して個別MIDI入力選択を実装
+次のTODO: 実装開始
+---
+
+---
+2026-02-06 16:50
+作業項目: MIDI入力デバイス選択機能 実装完了
+追加機能の説明:
+- MIDIInputManager.swift変更:
+  - MIDISourceItem型追加: id, name, isOnline（UI用）
+  - MIDISourceMode列挙型追加: .all / .specific(name)
+  - availableSources: [MIDISourceItem] プロパティ追加
+  - selectedSourceMode プロパティ追加
+  - start()改修: selectedSourceModeに基づき.all→connectToAllSources / .specific→connect(to:)
+  - selectSource(_:) メソッド追加: ソース切替時にstop→start再接続
+  - refreshDeviceList()改修: availableSourcesも更新
+- SettingsView.swift変更:
+  - MIDIInputSourcePicker View 新規追加
+    - "All Sources" + 個別ソース名のPicker
+    - onlineデバイスに緑ドット表示
+    - 選択変更時にmidiInput.selectSource()で即座に切替
+  - MIDIセクションにMIDIInputSourcePickerを追加
+- ビルド結果:
+  - iOS: BUILD SUCCEEDED → 実機インストール・起動成功
+  - macOS: BUILD SUCCEEDED → アプリ再起動成功
+決定事項:
+  - MIDI2Kit connect(to:) APIで個別ソース接続
+  - デフォルトは"All Sources"（Omni）
+  - ソース切替はstop/startで安全に再接続
+次のTODO:
+  - 動作確認（設定→MIDI Input Pickerでデバイス選択テスト）
+---
+
+---
+2026-02-06 16:52
+作業項目: E.PIANO 1 プリセットの音割れ問題修正
+追加機能の説明:
+- 問題: E.PIANO 1の音が割れすぎている
+- 原因分析:
+  - DX7 Output Levelは対数カーブだが、現在のnormalizedLevel変換は線形(level/99)
+  - モジュレーターレベルが線形変換では高すぎる（DX7 OL 82 → 0.828はDX7実機より遥かに大きい）
+  - フィードバック6/7=0.857も過大
+  - 結果として過剰なFM変調→音割れ
+- 対策: モジュレーターのoutputLevel値を下げ、EG減衰を速くし、フィードバックを抑制
+  - 他プリセットも同様に調整
+決定事項: 全プリセットのモジュレーターレベルを適正化
+次のTODO: E.PIANO 1 および他プリセットのパラメータ修正
+---
+
+---
+2026-02-06 16:54
+作業項目: E.PIANO 1 および全プリセットのモジュレーターレベル適正化（セッション引き継ぎ）
+追加機能の説明:
+- 前セッションで特定した問題:
+  - DX7 Output Level は対数カーブだが normalizedLevel は線形 (level/99)
+  - モジュレーターレベルが過大 → 過剰FM変調 → 音割れ
+- 修正方針:
+  1. DX7Preset.swift の normalizedLevel に DX7対数カーブ近似を実装
+  2. 全プリセットのモジュレーターレベル・フィードバック値を再調整
+- 対象ファイル: DX7Preset.swift, DX7FactoryPresets.swift
+決定事項: DX7対数レベルカーブの実装で根本修正
+次のTODO: normalizedLevel変換の修正 → プリセットパラメータ再調整
+---
+
+---
+2026-02-06 17:02
+作業項目: DX7対数レベルカーブ修正 動作確認OK
+追加機能の説明:
+- normalizedLevel を線形(level/99)から対数(0.75dB/step)に修正
+- macOS版でユーザーが E.PIANO 1 の音色改善を確認
+- 全プリセットに自動適用（DX7ネイティブ値はそのまま、変換式のみ修正）
+決定事項: 対数レベルカーブ修正は成功、音割れ問題解消
+次のTODO: 次の指示待ち
+---
