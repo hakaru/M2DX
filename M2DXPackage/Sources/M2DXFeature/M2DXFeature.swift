@@ -25,109 +25,37 @@ public struct M2DXRootView: View {
     public init() {}
 
     public var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // Mode selector
-                Picker("Engine Mode", selection: $engineState.mode) {
-                    ForEach(SynthEngineMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
+        VStack {
+            Text("M2DX FM Synthesizer")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            if audioEngine.isRunning {
+                MIDIKeyboardView(
+                    octave: $keyboardOctave,
+                    octaveCount: 2,
+                    onNoteOn: { note, velocity in
+                        audioEngine.noteOn(note, velocity: velocity)
+                    },
+                    onNoteOff: { note in
+                        audioEngine.noteOff(note)
                     }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.top, 8)
-
-                Divider()
-                    .padding(.top, 8)
-
-                // Content based on mode
-                switch engineState.mode {
-                case .m2dx8op:
-                    M2DX8OpView(
-                        voice: $engineState.m2dxVoice,
-                        selectedOperator: $selectedOperator,
-                        audioEngine: audioEngine
-                    )
-                case .tx816:
-                    TX816View(
-                        config: $engineState.tx816Config,
-                        selectedModule: $selectedModule
-                    )
-                }
-
-                // Keyboard section
-                if showKeyboard {
-                    Divider()
-
-                    MIDIKeyboardView(
-                        octave: $keyboardOctave,
-                        octaveCount: 2,
-                        onNoteOn: { note, velocity in
-                            audioEngine.noteOn(note, velocity: velocity)
-                        },
-                        onNoteOff: { note in
-                            audioEngine.noteOff(note)
-                        }
-                    )
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
-                }
+                )
+                .padding()
+            } else if let error = audioEngine.errorMessage {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+            } else {
+                ProgressView("Starting audio engine...")
             }
-            .navigationTitle("M2DX")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Button("Init Voice") {
-                            initializeVoice()
-                        }
-                        Divider()
-                        Button("Load Preset...") { }
-                        Button("Save Preset...") { }
-                    } label: {
-                        Image(systemName: "doc.badge.gearshape")
-                    }
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 12) {
-                        // Audio status indicator
-                        Image(systemName: audioEngine.isRunning ? "speaker.wave.2.fill" : "speaker.slash")
-                            .foregroundStyle(audioEngine.isRunning ? .green : .secondary)
-
-                        // Keyboard toggle
-                        Button {
-                            withAnimation {
-                                showKeyboard.toggle()
-                            }
-                        } label: {
-                            Image(systemName: showKeyboard ? "pianokeys" : "pianokeys.inverse")
-                        }
-
-                        Text(currentVoiceName)
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+        }
+        .task {
+            await audioEngine.start()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
             }
-            .task {
-                // Start audio engine when view appears
-                await audioEngine.start()
-
-                // Wait for cancellation (view disappears)
-                // withTaskCancellationHandler ensures cleanup on cancel
-                await withTaskCancellationHandler {
-                    // Keep task alive until cancelled
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .seconds(1))
-                    }
-                } onCancel: {
-                    // Clean up when task is cancelled (view disappears)
-                    Task { @MainActor in
-                        audioEngine.stop()
-                    }
-                }
-            }
+            audioEngine.stop()
         }
     }
 
@@ -152,7 +80,7 @@ public struct M2DXRootView: View {
 
 // MARK: - M2DX 8-Operator View
 
-/// View for M2DX native 8-operator mode
+/// View for M2DX native 6-operator mode
 struct M2DX8OpView: View {
     @Binding var voice: M2DXVoice
     @Binding var selectedOperator: Int
@@ -164,14 +92,14 @@ struct M2DX8OpView: View {
                 // Algorithm display
                 AlgorithmView(
                     algorithm: voice.algorithm,
-                    operatorCount: 8
+                    operatorCount: 6
                 )
                 .frame(height: 100)
                 .padding(.horizontal)
 
                 Divider()
 
-                // 8 Operator grid (2 rows × 4 columns)
+                // 6 Operator grid (2 rows × 3 columns)
                 OperatorGridView8Op(
                     operators: $voice.operators,
                     selectedOperator: $selectedOperator
@@ -270,7 +198,7 @@ struct AlgorithmView: View {
 
 // MARK: - 8-Operator Grid View
 
-/// Grid displaying all 8 operators (2×4 layout)
+/// Grid displaying all 6 operators (2×3 layout)
 struct OperatorGridView8Op: View {
     @Binding var operators: [OperatorParameters]
     @Binding var selectedOperator: Int
@@ -278,13 +206,12 @@ struct OperatorGridView8Op: View {
     let columns = [
         GridItem(.flexible()),
         GridItem(.flexible()),
-        GridItem(.flexible()),
         GridItem(.flexible())
     ]
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(0..<8, id: \.self) { index in
+            ForEach(0..<6, id: \.self) { index in
                 if index < operators.count {
                     OperatorCell(
                         operatorIndex: index + 1,

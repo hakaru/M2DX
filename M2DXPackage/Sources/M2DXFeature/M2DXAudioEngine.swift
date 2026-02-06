@@ -1,12 +1,11 @@
 import AVFoundation
-import AudioToolbox
+import os
 
 // MARK: - Audio Engine Errors
 
 /// Errors that can occur during audio engine operations
 public enum AudioEngineError: LocalizedError {
     case audioSessionSetupFailed(underlying: Error)
-    case audioUnitInstantiationFailed(underlying: Error)
     case engineStartFailed(underlying: Error)
     case engineNotRunning
 
@@ -14,8 +13,6 @@ public enum AudioEngineError: LocalizedError {
         switch self {
         case .audioSessionSetupFailed(let error):
             return "Audio session setup failed: \(error.localizedDescription)"
-        case .audioUnitInstantiationFailed(let error):
-            return "Audio Unit instantiation failed: \(error.localizedDescription)"
         case .engineStartFailed(let error):
             return "Audio engine start failed: \(error.localizedDescription)"
         case .engineNotRunning:
@@ -24,45 +21,35 @@ public enum AudioEngineError: LocalizedError {
     }
 }
 
-// MARK: - Parameter Address Constants
+// MARK: - Render State
 
-/// Parameter address constants matching M2DXParameterAddressMap
-private enum ParameterAddress {
-    static let algorithm: UInt64 = 0
-    static let masterVolume: UInt64 = 1
+/// Shared state between main thread and render thread
+private final class RenderState: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock(initialState: true)
 
-    static let operatorBase: UInt64 = 100
-    static let operatorStride: UInt64 = 100
-
-    // Operator parameter offsets
-    static let levelOffset: UInt64 = 0
-    static let ratioOffset: UInt64 = 1
-    static let detuneOffset: UInt64 = 2
-    static let feedbackOffset: UInt64 = 3
-
-    static func operatorAddress(_ opIndex: Int, offset: UInt64) -> UInt64 {
-        return operatorBase + UInt64(opIndex) * operatorStride + offset
+    var isRunning: Bool {
+        get { lock.withLock { $0 } }
+        set { lock.withLock { $0 = newValue } }
     }
 }
 
 // MARK: - M2DX Audio Engine
 
-/// Standalone audio engine that hosts the M2DX AUv3 synthesizer internally
-/// Allows the app to produce sound without requiring an external DAW host
+/// Standalone audio engine that drives a pure-Swift FM synth via AVAudioPlayerNode
+/// with double-buffered scheduling. No AUv3 dependency.
 @MainActor
 @Observable
 public final class M2DXAudioEngine {
 
     // MARK: - Properties
 
-    /// Audio engine for hosting the AU
     private var audioEngine: AVAudioEngine?
+    private var playerNode: AVAudioPlayerNode?
+    private let synth = FMSynthEngine()
+    private var renderState: RenderState?
 
-    /// The M2DX Audio Unit instance
-    private var audioUnit: AUAudioUnit?
-
-    /// Audio Unit node in the engine graph
-    private var auNode: AVAudioUnit?
+    /// Buffer configuration
+    private let bufferFrameCount: AVAudioFrameCount = 512
 
     /// Currently playing notes (for proper cleanup)
     private var activeNotes: Set<UInt8> = []
@@ -73,26 +60,22 @@ public final class M2DXAudioEngine {
     /// Current algorithm (0-31)
     public var algorithm: Int = 0 {
         didSet {
-            guard isRunning else { return }
-            setParameter(address: ParameterAddress.algorithm, value: Float(algorithm))
+            synth.setAlgorithm(algorithm)
         }
     }
 
     /// Master volume (0-1)
     public var masterVolume: Float = 0.7 {
         didSet {
-            guard isRunning else { return }
-            setParameter(address: ParameterAddress.masterVolume, value: masterVolume)
+            synth.setMasterVolume(masterVolume)
         }
     }
 
     /// Operator levels (0-1)
     public var operatorLevels: [Float] = [1.0, 1.0, 1.0, 1.0, 0.5, 0.5] {
         didSet {
-            guard isRunning else { return }
             for (index, level) in operatorLevels.enumerated() {
-                let address = ParameterAddress.operatorAddress(index, offset: ParameterAddress.levelOffset)
-                setParameter(address: address, value: level)
+                synth.setOperatorLevel(index, level: level)
             }
         }
     }
@@ -100,35 +83,18 @@ public final class M2DXAudioEngine {
     /// Error message if initialization failed
     public private(set) var errorMessage: String?
 
-    // MARK: - Component Description
-
-    /// Audio Unit component description for M2DX
-    private static let componentDescription = AudioComponentDescription(
-        componentType: kAudioUnitType_MusicDevice,
-        componentSubType: FourCharCode("m2dx"),
-        componentManufacturer: FourCharCode("M2DX"),
-        componentFlags: 0,
-        componentFlagsMask: 0
-    )
-
     // MARK: - Initialization
 
     public init() {}
-
-    deinit {
-        // Note: deinit runs on arbitrary thread, but stop() is @MainActor
-        // The caller should ensure stop() is called before deallocation
-    }
 
     // MARK: - Engine Control
 
     /// Start the audio engine
     public func start() async {
-        // Don't restart if already running
         guard !isRunning else { return }
 
         do {
-            try await setupAudioEngine()
+            try setupAudioEngine()
             isRunning = true
             errorMessage = nil
         } catch {
@@ -141,155 +107,189 @@ public final class M2DXAudioEngine {
 
     /// Stop the audio engine and clean up resources
     public func stop() {
-        guard isRunning else { return }
+        // Stop render thread
+        renderState?.isRunning = false
+        renderState = nil
 
-        // Send note off for all active notes
-        for note in activeNotes {
-            sendMIDI(status: 0x80, data1: note, data2: 0)
-        }
+        // All notes off via the MIDI queue
+        synth.midiQueue.enqueue(MIDIEvent(kind: .controlChange, data1: 123, data2: 0))
         activeNotes.removeAll()
 
-        // Send all notes off as safety measure
-        sendMIDI(status: 0xB0, data1: 123, data2: 0)
-
-        // Stop and clean up engine
+        playerNode?.stop()
         audioEngine?.stop()
 
-        if let auNode = auNode {
-            audioEngine?.detach(auNode)
+        if let node = playerNode {
+            audioEngine?.detach(node)
         }
 
-        // Deactivate audio session
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
             print("M2DXAudioEngine: Failed to deactivate audio session: \(error)")
         }
 
-        // Clear references
-        audioUnit = nil
-        auNode = nil
+        playerNode = nil
         audioEngine = nil
         isRunning = false
     }
 
     // MARK: - Audio Engine Setup
 
-    private func setupAudioEngine() async throws {
+    private func setupAudioEngine() throws {
         // Configure audio session
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setPreferredSampleRate(48000)
+            try session.setPreferredIOBufferDuration(0.005)
             try session.setActive(true)
         } catch {
             throw AudioEngineError.audioSessionSetupFailed(underlying: error)
         }
 
-        // Create audio engine
         let engine = AVAudioEngine()
-        self.audioEngine = engine
 
-        // Instantiate the Audio Unit
-        let avAudioUnit: AVAudioUnit
-        do {
-            // Use default options for iOS (in-process is default for app extensions)
-            avAudioUnit = try await AVAudioUnit.instantiate(
-                with: Self.componentDescription,
-                options: []
-            )
-        } catch {
-            throw AudioEngineError.audioUnitInstantiationFailed(underlying: error)
+        // Use output node's format (deinterleaved stereo)
+        let outputFormat = engine.outputNode.outputFormat(forBus: 0)
+        let sampleRate = outputFormat.sampleRate
+
+        // Configure synth
+        synth.setSampleRate(Float(sampleRate))
+        synth.setAlgorithm(algorithm)
+        synth.setMasterVolume(masterVolume)
+        for (i, level) in operatorLevels.enumerated() {
+            synth.setOperatorLevel(i, level: level)
         }
 
-        self.auNode = avAudioUnit
-        self.audioUnit = avAudioUnit.auAudioUnit
+        // Create player node
+        let player = AVAudioPlayerNode()
 
-        // Connect AU to output
-        engine.attach(avAudioUnit)
-        engine.connect(avAudioUnit, to: engine.mainMixerNode, format: nil)
+        // Use the standard deinterleaved format that AVAudioEngine expects
+        guard let format = AVAudioFormat(
+            standardFormatWithSampleRate: sampleRate,
+            channels: 2
+        ) else {
+            throw AudioEngineError.engineStartFailed(
+                underlying: NSError(domain: "M2DX", code: -1, userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to create audio format"
+                ])
+            )
+        }
 
-        // Start engine
+        self.playerNode = player
+        self.audioEngine = engine
+
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+
         do {
             try engine.start()
         } catch {
             throw AudioEngineError.engineStartFailed(underlying: error)
         }
 
-        // Set initial parameters
-        setParameter(address: ParameterAddress.algorithm, value: Float(algorithm))
-        setParameter(address: ParameterAddress.masterVolume, value: masterVolume)
+        // Start playback
+        player.play()
+
+        // Start render thread for continuous buffer scheduling
+        let state = RenderState()
+        self.renderState = state
+
+        let synthRef = synth
+        let frameCount = bufferFrameCount
+
+        let thread = Thread {
+            Self.renderLoop(
+                synth: synthRef,
+                player: player,
+                format: format,
+                frameCount: frameCount,
+                state: state
+            )
+        }
+        thread.name = "M2DX-Render"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+    }
+
+    // MARK: - Render Loop (runs on dedicated thread)
+
+    nonisolated private static func renderLoop(
+        synth: FMSynthEngine,
+        player: AVAudioPlayerNode,
+        format: AVAudioFormat,
+        frameCount: AVAudioFrameCount,
+        state: RenderState
+    ) {
+        while state.isRunning {
+            guard player.isPlaying else {
+                Thread.sleep(forTimeInterval: 0.001)
+                continue
+            }
+
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: frameCount
+            ) else { continue }
+
+            buffer.frameLength = frameCount
+
+            // Render into deinterleaved buffers
+            guard let floatChannelData = buffer.floatChannelData else { continue }
+            let leftChannel = floatChannelData[0]
+            let rightChannel = floatChannelData[1]
+
+            // Zero buffers
+            memset(leftChannel, 0, Int(frameCount) * MemoryLayout<Float>.size)
+            memset(rightChannel, 0, Int(frameCount) * MemoryLayout<Float>.size)
+
+            // Render synth
+            synth.render(
+                into: leftChannel,
+                bufferR: rightChannel,
+                frameCount: Int(frameCount)
+            )
+
+            // Schedule buffer and wait for completion
+            let semaphore = DispatchSemaphore(value: 0)
+            player.scheduleBuffer(buffer) {
+                semaphore.signal()
+            }
+            semaphore.wait()
+        }
     }
 
     // MARK: - MIDI Note Control
 
     /// Send note on event
-    /// - Parameters:
-    ///   - note: MIDI note number (0-127)
-    ///   - velocity: Note velocity (0-127)
     public func noteOn(_ note: UInt8, velocity: UInt8 = 100) {
         guard isRunning else { return }
         activeNotes.insert(note)
-        sendMIDI(status: 0x90, data1: note, data2: velocity)
+        synth.midiQueue.enqueue(MIDIEvent(kind: .noteOn, data1: note, data2: velocity))
     }
 
     /// Send note off event
-    /// - Parameter note: MIDI note number (0-127)
     public func noteOff(_ note: UInt8) {
         guard isRunning else { return }
         activeNotes.remove(note)
-        sendMIDI(status: 0x80, data1: note, data2: 0)
+        synth.midiQueue.enqueue(MIDIEvent(kind: .noteOff, data1: note, data2: 0))
     }
 
     /// Send all notes off
     public func allNotesOff() {
-        // Turn off only active notes for efficiency
         for note in activeNotes {
-            sendMIDI(status: 0x80, data1: note, data2: 0)
+            synth.midiQueue.enqueue(MIDIEvent(kind: .noteOff, data1: note, data2: 0))
         }
         activeNotes.removeAll()
-
-        // Also send CC 123 (All Notes Off) as safety measure
-        sendMIDI(status: 0xB0, data1: 123, data2: 0)
-    }
-
-    /// Send MIDI message to the Audio Unit
-    private func sendMIDI(status: UInt8, data1: UInt8, data2: UInt8) {
-        guard let au = audioUnit,
-              let midiBlock = au.scheduleMIDIEventBlock else { return }
-
-        // Send immediately (AUEventSampleTimeImmediate = -1)
-        var midiData: [UInt8] = [status, data1, data2]
-        midiData.withUnsafeMutableBufferPointer { buffer in
-            // Safe unwrap - buffer will always have baseAddress for non-empty array
-            guard let baseAddress = buffer.baseAddress else { return }
-            midiBlock(AUEventSampleTimeImmediate, 0, 3, baseAddress)
-        }
+        synth.midiQueue.enqueue(MIDIEvent(kind: .controlChange, data1: 123, data2: 0))
     }
 
     // MARK: - Parameter Control
 
-    /// Set a parameter value
-    /// - Parameters:
-    ///   - address: Parameter address
-    ///   - value: Parameter value
-    public func setParameter(address: UInt64, value: Float) {
-        guard let tree = audioUnit?.parameterTree else { return }
-        tree.parameter(withAddress: address)?.value = value
-    }
-
-    /// Get a parameter value
-    /// - Parameter address: Parameter address
-    /// - Returns: Current parameter value
-    public func getParameter(address: UInt64) -> Float? {
-        guard let tree = audioUnit?.parameterTree else { return nil }
-        return tree.parameter(withAddress: address)?.value
-    }
-
     /// Set operator level
     public func setOperatorLevel(_ opIndex: Int, level: Float) {
         guard opIndex >= 0 && opIndex < 6 else { return }
-        let address = ParameterAddress.operatorAddress(opIndex, offset: ParameterAddress.levelOffset)
-        setParameter(address: address, value: level)
+        synth.setOperatorLevel(opIndex, level: level)
         if opIndex < operatorLevels.count {
             operatorLevels[opIndex] = level
         }
@@ -298,33 +298,18 @@ public final class M2DXAudioEngine {
     /// Set operator ratio
     public func setOperatorRatio(_ opIndex: Int, ratio: Float) {
         guard opIndex >= 0 && opIndex < 6 else { return }
-        let address = ParameterAddress.operatorAddress(opIndex, offset: ParameterAddress.ratioOffset)
-        setParameter(address: address, value: ratio)
+        synth.setOperatorRatio(opIndex, ratio: ratio)
     }
 
     /// Set operator detune
     public func setOperatorDetune(_ opIndex: Int, cents: Float) {
         guard opIndex >= 0 && opIndex < 6 else { return }
-        let address = ParameterAddress.operatorAddress(opIndex, offset: ParameterAddress.detuneOffset)
-        setParameter(address: address, value: cents)
+        synth.setOperatorDetune(opIndex, cents: cents)
     }
 
     /// Set operator feedback
     public func setOperatorFeedback(_ opIndex: Int, feedback: Float) {
         guard opIndex >= 0 && opIndex < 6 else { return }
-        let address = ParameterAddress.operatorAddress(opIndex, offset: ParameterAddress.feedbackOffset)
-        setParameter(address: address, value: feedback)
-    }
-}
-
-// MARK: - FourCharCode Extension
-
-private extension FourCharCode {
-    init(_ string: String) {
-        var result: FourCharCode = 0
-        for char in string.utf8.prefix(4) {
-            result = (result << 8) | FourCharCode(char)
-        }
-        self = result
+        synth.setOperatorFeedback(opIndex, feedback: feedback)
     }
 }

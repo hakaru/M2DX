@@ -321,7 +321,7 @@ public struct M2DXVoice: Sendable, Equatable, Identifiable {
         self.algorithm = algorithm
         self.feedback = feedback
         self.feedback2 = feedback2
-        self.operators = operators ?? (0..<8).map { OperatorParameters.defaultOperator(id: $0 + 1) }
+        self.operators = operators ?? (0..<6).map { OperatorParameters.defaultOperator(id: $0 + 1) }
         self.lfo = lfo
         self.lfo2 = lfo2
         self.pitchEnvelope = pitchEnvelope
@@ -329,8 +329,8 @@ public struct M2DXVoice: Sendable, Equatable, Identifiable {
         self.modulationMatrix = modulationMatrix
     }
 
-    /// Number of operators (always 8 for M2DX)
-    public static let operatorCount = 8
+    /// Number of operators (DX7 compatible: 6)
+    public static let operatorCount = 6
 }
 
 // MARK: - DX7 Voice (6-Operator, TX816 Compatible)
