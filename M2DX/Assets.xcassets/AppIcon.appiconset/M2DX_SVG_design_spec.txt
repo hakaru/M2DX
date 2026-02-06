@@ -1,0 +1,62 @@
+
+M2DX SVG Logo Design Specification
+=================================
+
+Purpose
+-------
+This document defines how to recreate the M2DX logo as a *pure vector SVG*,
+suitable for UI, print, and scalable rendering.
+
+Canvas
+------
+- ViewBox: 0 0 1000 300
+- Background: Transparent
+- Alignment: Horizontal center
+
+Typography
+----------
+- Base style: Custom geometric sans-serif
+- Stroke: None
+- Corners: Slightly rounded (radius ≈ 4% of stroke width)
+
+Letter Construction
+-------------------
+M:
+- Wide stance, symmetrical
+- Vertical stems slightly tapered inward
+
+2:
+- Continuous curve
+- Flat horizontal base
+- Thickness matches M stem
+
+D:
+- Half-oval outer curve
+- Inner counter scaled to 70%
+
+X:
+- Two diagonal strokes
+- Overlap at exact center
+- Angle ≈ 32 degrees
+
+Color
+-----
+Primary Gradient (Left → Right):
+- #E6E6E6 → #00C8D7 → #0077C8
+
+Flat Variant:
+- Monochrome white (#FFFFFF)
+- Monochrome black (#000000)
+
+Export Rules
+------------
+- No raster effects
+- No blur, glow, or shadows
+- All paths expanded
+- Stroke converted to outline
+
+Recommended Files
+-----------------
+- M2DX_logo.svg
+- M2DX_logo_flat_white.svg
+- M2DX_logo_flat_black.svg

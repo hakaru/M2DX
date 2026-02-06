@@ -1,0 +1,18 @@
+// Debug.xcconfig
+// Debug-specific settings
+
+#include "Shared.xcconfig"
+
+// Optimization
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+GCC_OPTIMIZATION_LEVEL = 0
+SWIFT_COMPILATION_MODE = singlefile
+
+// Debug
+DEBUG_INFORMATION_FORMAT = dwarf
+ENABLE_TESTABILITY = YES
+GCC_PREPROCESSOR_DEFINITIONS = DEBUG=1 $(inherited)
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG $(inherited)
+
+// Code Signing
+CODE_SIGN_IDENTITY = Apple Development

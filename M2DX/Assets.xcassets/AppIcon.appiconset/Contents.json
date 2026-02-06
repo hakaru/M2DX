@@ -1,0 +1,14 @@
+{
+  "images" : [
+    {
+      "filename" : "M2DX_AppIcon_1024_safe.png",
+      "idiom" : "universal",
+      "platform" : "ios",
+      "size" : "1024x1024"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

@@ -1,0 +1,28 @@
+// Shared.xcconfig
+// Common settings for all configurations
+
+// Deployment
+IPHONEOS_DEPLOYMENT_TARGET = 18.0
+TARGETED_DEVICE_FAMILY = 1,2
+
+// Swift
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+
+// Build Settings
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+ENABLE_MODULE_VERIFIER = YES
+
+// Code Signing
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+// Entitlements
+CODE_SIGN_ENTITLEMENTS = Config/M2DX.entitlements
+
+// Bundle ID
+PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DX
+
+// Product
+PRODUCT_NAME = $(TARGET_NAME)
+INFOPLIST_KEY_CFBundleDisplayName = M2DX

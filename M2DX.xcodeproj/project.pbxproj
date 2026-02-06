@@ -1,0 +1,734 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0FDD31ED09AC40C434B92BA1 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6E812659DCDCDAEFD56E996D /* AudioToolbox.framework */; };
+		158DA7CCB52CDD349FE57DCC /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = F564538FAF402344F126263A /* LaunchScreen.storyboard */; };
+		159F225072B7723F59AD7E12 /* M2DXKernelBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5EEE7F4254A8511F6DF1B4AC /* M2DXKernelBridge.mm */; };
+		3A8C37B3671178B3BF7E71BD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EB3C824AC7C7B60EAA750BB8 /* Assets.xcassets */; };
+		6128FA024709BD89DAF1FA89 /* M2DXFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 74AB387C74AD68393AAA701B /* M2DXFeature */; };
+		6A0ADC4EAD13E248E4DACB56 /* CoreAudioKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 058B3FFD7FBBF96B98D37FD8 /* CoreAudioKit.framework */; };
+		7CBAEA48BB53BD80BE28DE62 /* M2DXFeature in Frameworks */ = {isa = PBXBuildFile; productRef = 6A803FFD6F0A73777A2F2BB3 /* M2DXFeature */; };
+		85177778CA23939D0ED2C7BC /* M2DXAudioUnitViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC8FAACD006574933AD44079 /* M2DXAudioUnitViewController.swift */; };
+		903D46F2D82E1BB9AEACF831 /* M2DXAudioUnit.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9D367F6DB2128EB4B3A3A234 /* M2DXAudioUnit.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		ACB1A330F96EE3E505FCA778 /* M2DXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 705DB916C0FCA368463B0F92 /* M2DXCore */; };
+		ACE62CDFB890C061CF50BEC3 /* M2DXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 02918B762427305731779201 /* M2DXCore */; };
+		D44399AEA27876D01F51623D /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 310FE653812783F9AF59DB8F /* AVFoundation.framework */; };
+		D526E358FCA4B4CFED4BEDC1 /* M2DXAudioUnit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0E8EDDFFFF9837202447A6 /* M2DXAudioUnit.swift */; };
+		D582C0CE0F8E22312E4C1B5F /* M2DXCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7A706925AB6589B0896696C7 /* M2DXCore */; };
+		DEAB71627CFDCDC8388E4A10 /* M2DXCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D4DFD55DD6E8A6B82E0D7B5 /* M2DXCoreTests.swift */; };
+		E777DA0DF14CF17E66F6FC17 /* M2DXApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E73F6074D4FF93B9B93EDB4 /* M2DXApp.swift */; };
+		F5911DCC4A2E176916D6D6D1 /* M2DXParameterAddresses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7321AB547DB4DC80F83F6B9A /* M2DXParameterAddresses.swift */; };
+		FFAE0A31A04B5F4D87090721 /* M2DXFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EFEA1AE5D263785D4B4E39E /* M2DXFeatureTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		87E6E9690CB91A940EEB26BE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0F4216686651A8738F945A3B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D7BF0C227EBA765D5D2205B6;
+			remoteInfo = M2DXAudioUnit;
+		};
+		E5D4E8271C5D1CB5B18D5AA9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0F4216686651A8738F945A3B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2A6D0F5DE25A323F0F81EFB1;
+			remoteInfo = M2DX;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		0C3C922463B13E98C9B6CD90 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				903D46F2D82E1BB9AEACF831 /* M2DXAudioUnit.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		058B3FFD7FBBF96B98D37FD8 /* CoreAudioKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudioKit.framework; path = System/Library/Frameworks/CoreAudioKit.framework; sourceTree = SDKROOT; };
+		06B11D3F0EED863B62211A6C /* M2DXPackage */ = {isa = PBXFileReference; lastKnownFileType = folder; name = M2DXPackage; path = M2DXPackage; sourceTree = SOURCE_ROOT; };
+		12754DAEDA869065456851EB /* M2DXKernel.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = M2DXKernel.hpp; sourceTree = "<group>"; };
+		310FE653812783F9AF59DB8F /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		3547A000FEC39C9AA7A6D260 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		4D4DFD55DD6E8A6B82E0D7B5 /* M2DXCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXCoreTests.swift; sourceTree = "<group>"; };
+		538255B8E722EA5A54AFBE44 /* M2DXKernelBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = M2DXKernelBridge.h; sourceTree = "<group>"; };
+		5D0E8EDDFFFF9837202447A6 /* M2DXAudioUnit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXAudioUnit.swift; sourceTree = "<group>"; };
+		5E73F6074D4FF93B9B93EDB4 /* M2DXApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXApp.swift; sourceTree = "<group>"; };
+		5EEE7F4254A8511F6DF1B4AC /* M2DXKernelBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = M2DXKernelBridge.mm; sourceTree = "<group>"; };
+		6822E88DFD888511C8D592FB /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		6E812659DCDCDAEFD56E996D /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
+		7042338D950B9390F98B2476 /* DX7Constants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = DX7Constants.hpp; sourceTree = "<group>"; };
+		7321AB547DB4DC80F83F6B9A /* M2DXParameterAddresses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXParameterAddresses.swift; sourceTree = "<group>"; };
+		8B189605F2A6C65052E33025 /* M2DX.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = M2DX.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9D367F6DB2128EB4B3A3A234 /* M2DXAudioUnit.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = M2DXAudioUnit.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9EFEA1AE5D263785D4B4E39E /* M2DXFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXFeatureTests.swift; sourceTree = "<group>"; };
+		B7BB4F1D5AB45BC0746E275C /* M2DXTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = M2DXTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D4085D0039BC9155C290D662 /* M2DXAudioUnit-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "M2DXAudioUnit-Bridging-Header.h"; sourceTree = "<group>"; };
+		DC8FAACD006574933AD44079 /* M2DXAudioUnitViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2DXAudioUnitViewController.swift; sourceTree = "<group>"; };
+		DE24918DA714B8EEE518F141 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		EB3C824AC7C7B60EAA750BB8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F564538FAF402344F126263A /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		F6D41D1929C276466ECFC881 /* FMOperator.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = FMOperator.hpp; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		0A31D6B01FD08E41E3CB95E5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D582C0CE0F8E22312E4C1B5F /* M2DXCore in Frameworks */,
+				7CBAEA48BB53BD80BE28DE62 /* M2DXFeature in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A8205FB410144283840F86C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ACE62CDFB890C061CF50BEC3 /* M2DXCore in Frameworks */,
+				0FDD31ED09AC40C434B92BA1 /* AudioToolbox.framework in Frameworks */,
+				D44399AEA27876D01F51623D /* AVFoundation.framework in Frameworks */,
+				6A0ADC4EAD13E248E4DACB56 /* CoreAudioKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		879E9E90F336208C028226EB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6128FA024709BD89DAF1FA89 /* M2DXFeature in Frameworks */,
+				ACB1A330F96EE3E505FCA778 /* M2DXCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		233BF169A356A48E1921A2B3 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				6E812659DCDCDAEFD56E996D /* AudioToolbox.framework */,
+				310FE653812783F9AF59DB8F /* AVFoundation.framework */,
+				058B3FFD7FBBF96B98D37FD8 /* CoreAudioKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		2C18E0B8E95C89294EBC395A /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				06B11D3F0EED863B62211A6C /* M2DXPackage */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		2FD691B07D5FE55F3F95D897 /* M2DXAudioUnit */ = {
+			isa = PBXGroup;
+			children = (
+				74992D4412C0A83713239B67 /* Bridge */,
+				5593C774EADE8EABB06B0472 /* DSP */,
+				A46C848921B7C077ED8E3BCE /* Parameters */,
+				DE24918DA714B8EEE518F141 /* Info.plist */,
+				5D0E8EDDFFFF9837202447A6 /* M2DXAudioUnit.swift */,
+				DC8FAACD006574933AD44079 /* M2DXAudioUnitViewController.swift */,
+			);
+			path = M2DXAudioUnit;
+			sourceTree = "<group>";
+		};
+		359B5E36CC67940E2F3459AE /* M2DXCoreTests */ = {
+			isa = PBXGroup;
+			children = (
+				4D4DFD55DD6E8A6B82E0D7B5 /* M2DXCoreTests.swift */,
+			);
+			name = M2DXCoreTests;
+			path = M2DXPackage/Tests/M2DXCoreTests;
+			sourceTree = "<group>";
+		};
+		366AAC768DD1FA3F562B2567 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				3547A000FEC39C9AA7A6D260 /* Debug.xcconfig */,
+				6822E88DFD888511C8D592FB /* Release.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		5593C774EADE8EABB06B0472 /* DSP */ = {
+			isa = PBXGroup;
+			children = (
+				7042338D950B9390F98B2476 /* DX7Constants.hpp */,
+				F6D41D1929C276466ECFC881 /* FMOperator.hpp */,
+				12754DAEDA869065456851EB /* M2DXKernel.hpp */,
+			);
+			path = DSP;
+			sourceTree = "<group>";
+		};
+		629E9D38B68B2F7F4C4F4F57 = {
+			isa = PBXGroup;
+			children = (
+				366AAC768DD1FA3F562B2567 /* Config */,
+				BD340DC9C4FAAD0A00AFE902 /* M2DX */,
+				2FD691B07D5FE55F3F95D897 /* M2DXAudioUnit */,
+				359B5E36CC67940E2F3459AE /* M2DXCoreTests */,
+				76725571F8A4B8D74D1A9F66 /* M2DXFeatureTests */,
+				2C18E0B8E95C89294EBC395A /* Packages */,
+				233BF169A356A48E1921A2B3 /* Frameworks */,
+				C2AA4C3F930294E1F1464EBD /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		74992D4412C0A83713239B67 /* Bridge */ = {
+			isa = PBXGroup;
+			children = (
+				D4085D0039BC9155C290D662 /* M2DXAudioUnit-Bridging-Header.h */,
+				538255B8E722EA5A54AFBE44 /* M2DXKernelBridge.h */,
+				5EEE7F4254A8511F6DF1B4AC /* M2DXKernelBridge.mm */,
+			);
+			path = Bridge;
+			sourceTree = "<group>";
+		};
+		76725571F8A4B8D74D1A9F66 /* M2DXFeatureTests */ = {
+			isa = PBXGroup;
+			children = (
+				9EFEA1AE5D263785D4B4E39E /* M2DXFeatureTests.swift */,
+			);
+			name = M2DXFeatureTests;
+			path = M2DXPackage/Tests/M2DXFeatureTests;
+			sourceTree = "<group>";
+		};
+		A46C848921B7C077ED8E3BCE /* Parameters */ = {
+			isa = PBXGroup;
+			children = (
+				7321AB547DB4DC80F83F6B9A /* M2DXParameterAddresses.swift */,
+			);
+			path = Parameters;
+			sourceTree = "<group>";
+		};
+		BD340DC9C4FAAD0A00AFE902 /* M2DX */ = {
+			isa = PBXGroup;
+			children = (
+				EB3C824AC7C7B60EAA750BB8 /* Assets.xcassets */,
+				F564538FAF402344F126263A /* LaunchScreen.storyboard */,
+				5E73F6074D4FF93B9B93EDB4 /* M2DXApp.swift */,
+			);
+			path = M2DX;
+			sourceTree = "<group>";
+		};
+		C2AA4C3F930294E1F1464EBD /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8B189605F2A6C65052E33025 /* M2DX.app */,
+				9D367F6DB2128EB4B3A3A234 /* M2DXAudioUnit.appex */,
+				B7BB4F1D5AB45BC0746E275C /* M2DXTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2A6D0F5DE25A323F0F81EFB1 /* M2DX */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BE4A7CD26E064ADDDEF2054F /* Build configuration list for PBXNativeTarget "M2DX" */;
+			buildPhases = (
+				8D1B551529B0F23F2C211F6B /* Sources */,
+				8D78C4E472A7C81BC3A39FA7 /* Resources */,
+				879E9E90F336208C028226EB /* Frameworks */,
+				0C3C922463B13E98C9B6CD90 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				18A85FB58F15BFD93817FA71 /* PBXTargetDependency */,
+			);
+			name = M2DX;
+			packageProductDependencies = (
+				74AB387C74AD68393AAA701B /* M2DXFeature */,
+				705DB916C0FCA368463B0F92 /* M2DXCore */,
+			);
+			productName = M2DX;
+			productReference = 8B189605F2A6C65052E33025 /* M2DX.app */;
+			productType = "com.apple.product-type.application";
+		};
+		51E010163F5D22DE14096363 /* M2DXTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 38BD0343808D7D046A5AAB59 /* Build configuration list for PBXNativeTarget "M2DXTests" */;
+			buildPhases = (
+				CA7D7EA8785699AEAE6DBDEE /* Sources */,
+				0A31D6B01FD08E41E3CB95E5 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				98BE6C6E45382531D119C522 /* PBXTargetDependency */,
+			);
+			name = M2DXTests;
+			packageProductDependencies = (
+				7A706925AB6589B0896696C7 /* M2DXCore */,
+				6A803FFD6F0A73777A2F2BB3 /* M2DXFeature */,
+			);
+			productName = M2DXTests;
+			productReference = B7BB4F1D5AB45BC0746E275C /* M2DXTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		D7BF0C227EBA765D5D2205B6 /* M2DXAudioUnit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5F965DB624254D9ADDD341A3 /* Build configuration list for PBXNativeTarget "M2DXAudioUnit" */;
+			buildPhases = (
+				003E34A581115570E2AE15B5 /* Sources */,
+				5A8205FB410144283840F86C /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = M2DXAudioUnit;
+			packageProductDependencies = (
+				02918B762427305731779201 /* M2DXCore */,
+			);
+			productName = M2DXAudioUnit;
+			productReference = 9D367F6DB2128EB4B3A3A234 /* M2DXAudioUnit.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0F4216686651A8738F945A3B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					2A6D0F5DE25A323F0F81EFB1 = {
+						DevelopmentTeam = K38MBRNKAT;
+						ProvisioningStyle = Automatic;
+					};
+					51E010163F5D22DE14096363 = {
+						DevelopmentTeam = K38MBRNKAT;
+						ProvisioningStyle = Automatic;
+					};
+					D7BF0C227EBA765D5D2205B6 = {
+						DevelopmentTeam = K38MBRNKAT;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 73A2342C9808C79F6BA57FDF /* Build configuration list for PBXProject "M2DX" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 629E9D38B68B2F7F4C4F4F57;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A448BB4B1C8DDF56B1677026 /* XCLocalSwiftPackageReference "M2DXPackage" */,
+			);
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				2A6D0F5DE25A323F0F81EFB1 /* M2DX */,
+				D7BF0C227EBA765D5D2205B6 /* M2DXAudioUnit */,
+				51E010163F5D22DE14096363 /* M2DXTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8D78C4E472A7C81BC3A39FA7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A8C37B3671178B3BF7E71BD /* Assets.xcassets in Resources */,
+				158DA7CCB52CDD349FE57DCC /* LaunchScreen.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		003E34A581115570E2AE15B5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D526E358FCA4B4CFED4BEDC1 /* M2DXAudioUnit.swift in Sources */,
+				85177778CA23939D0ED2C7BC /* M2DXAudioUnitViewController.swift in Sources */,
+				159F225072B7723F59AD7E12 /* M2DXKernelBridge.mm in Sources */,
+				F5911DCC4A2E176916D6D6D1 /* M2DXParameterAddresses.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8D1B551529B0F23F2C211F6B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E777DA0DF14CF17E66F6FC17 /* M2DXApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CA7D7EA8785699AEAE6DBDEE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DEAB71627CFDCDC8388E4A10 /* M2DXCoreTests.swift in Sources */,
+				FFAE0A31A04B5F4D87090721 /* M2DXFeatureTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		18A85FB58F15BFD93817FA71 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D7BF0C227EBA765D5D2205B6 /* M2DXAudioUnit */;
+			targetProxy = 87E6E9690CB91A940EEB26BE /* PBXContainerItemProxy */;
+		};
+		98BE6C6E45382531D119C522 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2A6D0F5DE25A323F0F81EFB1 /* M2DX */;
+			targetProxy = E5D4E8271C5D1CB5B18D5AA9 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		2602C3B11C4CF8F6B705C499 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DXTests;
+				SDKROOT = iphoneos;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/M2DX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/M2DX";
+			};
+			name = Release;
+		};
+		26EFD39294974657FB47856C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CODE_SIGN_ENTITLEMENTS = Config/M2DXAudioUnit.entitlements;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GCC_INPUT_FILETYPE = sourcecode.cpp.objcpp;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				INFOPLIST_FILE = M2DXAudioUnit/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				OTHER_CPLUSPLUSFLAGS = "-ffast-math";
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DX.AudioUnit;
+				PRODUCT_NAME = M2DXAudioUnit;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "M2DXAudioUnit/Bridge/M2DXAudioUnit-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		61B2880FCD754CDD5600D616 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CODE_SIGN_ENTITLEMENTS = Config/M2DXAudioUnit.entitlements;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_INPUT_FILETYPE = sourcecode.cpp.objcpp;
+				GCC_OPTIMIZATION_LEVEL = 3;
+				INFOPLIST_FILE = M2DXAudioUnit/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				OTHER_CPLUSPLUSFLAGS = "-ffast-math";
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DX.AudioUnit;
+				PRODUCT_NAME = M2DXAudioUnit;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "M2DXAudioUnit/Bridge/M2DXAudioUnit-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		826CBFED6851770A230A6E06 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/M2DX.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_GENERATION_MODE = GeneratedFile;
+				INFOPLIST_KEY_CFBundleDisplayName = M2DX;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DX;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		9307E3922BEDC67BC8956B02 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3547A000FEC39C9AA7A6D260 /* Debug.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEVELOPMENT_TEAM = K38MBRNKAT;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA868A1AEE50611BF6F06FA0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Config/M2DX.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_GENERATION_MODE = GeneratedFile;
+				INFOPLIST_KEY_CFBundleDisplayName = M2DX;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DX;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B4A0DD7469491E2AA93FC7D9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6822E88DFD888511C8D592FB /* Release.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEVELOPMENT_TEAM = K38MBRNKAT;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E7EF49AC5407D55914907903 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.M2DXTests;
+				SDKROOT = iphoneos;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/M2DX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/M2DX";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		38BD0343808D7D046A5AAB59 /* Build configuration list for PBXNativeTarget "M2DXTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E7EF49AC5407D55914907903 /* Debug */,
+				2602C3B11C4CF8F6B705C499 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5F965DB624254D9ADDD341A3 /* Build configuration list for PBXNativeTarget "M2DXAudioUnit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				26EFD39294974657FB47856C /* Debug */,
+				61B2880FCD754CDD5600D616 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		73A2342C9808C79F6BA57FDF /* Build configuration list for PBXProject "M2DX" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9307E3922BEDC67BC8956B02 /* Debug */,
+				B4A0DD7469491E2AA93FC7D9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BE4A7CD26E064ADDDEF2054F /* Build configuration list for PBXNativeTarget "M2DX" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA868A1AEE50611BF6F06FA0 /* Debug */,
+				826CBFED6851770A230A6E06 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A448BB4B1C8DDF56B1677026 /* XCLocalSwiftPackageReference "M2DXPackage" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = M2DXPackage;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		02918B762427305731779201 /* M2DXCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = M2DXCore;
+		};
+		6A803FFD6F0A73777A2F2BB3 /* M2DXFeature */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = M2DXFeature;
+		};
+		705DB916C0FCA368463B0F92 /* M2DXCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = M2DXCore;
+		};
+		74AB387C74AD68393AAA701B /* M2DXFeature */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = M2DXFeature;
+		};
+		7A706925AB6589B0896696C7 /* M2DXCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = M2DXCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 0F4216686651A8738F945A3B /* Project object */;
+}

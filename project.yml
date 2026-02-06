@@ -1,0 +1,142 @@
+name: M2DX
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+  groupSortPosition: top
+
+packages:
+  M2DXPackage:
+    path: M2DXPackage
+
+configs:
+  Debug: debug
+  Release: release
+
+configFiles:
+  Debug: Config/Debug.xcconfig
+  Release: Config/Release.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: K38MBRNKAT
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+targets:
+  M2DX:
+    type: application
+    platform: iOS
+    sources:
+      - path: M2DX
+        excludes:
+          - "*.xctestplan"
+    dependencies:
+      - package: M2DXPackage
+        product: M2DXFeature
+      - package: M2DXPackage
+        product: M2DXCore
+      - target: M2DXAudioUnit
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.M2DX
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_GENERATION_MODE: GeneratedFile
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0"
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_CFBundleDisplayName: "M2DX"
+        CODE_SIGN_ENTITLEMENTS: Config/M2DX.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          DEBUG_INFORMATION_FORMAT: dwarf
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+          DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+
+  M2DXAudioUnit:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: M2DXAudioUnit
+        excludes:
+          - "**/*.md"
+    dependencies:
+      - package: M2DXPackage
+        product: M2DXCore
+      - sdk: AudioToolbox.framework
+      - sdk: AVFoundation.framework
+      - sdk: CoreAudioKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.M2DX.AudioUnit
+        PRODUCT_NAME: M2DXAudioUnit
+        INFOPLIST_FILE: M2DXAudioUnit/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Config/M2DXAudioUnit.entitlements
+        CLANG_CXX_LANGUAGE_STANDARD: c++20
+        CLANG_CXX_LIBRARY: libc++
+        GCC_INPUT_FILETYPE: sourcecode.cpp.objcpp
+        SWIFT_OBJC_BRIDGING_HEADER: M2DXAudioUnit/Bridge/M2DXAudioUnit-Bridging-Header.h
+        OTHER_CPLUSPLUSFLAGS: "-ffast-math"
+        SKIP_INSTALL: YES
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          DEBUG_INFORMATION_FORMAT: dwarf
+          GCC_OPTIMIZATION_LEVEL: "0"
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+          DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+          GCC_OPTIMIZATION_LEVEL: "3"
+
+  M2DXTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: M2DXPackage/Tests/M2DXCoreTests
+      - path: M2DXPackage/Tests/M2DXFeatureTests
+    dependencies:
+      - target: M2DX
+      - package: M2DXPackage
+        product: M2DXCore
+      - package: M2DXPackage
+        product: M2DXFeature
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.M2DXTests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/M2DX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/M2DX"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  M2DX:
+    build:
+      targets:
+        M2DX: all
+        M2DXAudioUnit: all
+        M2DXTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - M2DXTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

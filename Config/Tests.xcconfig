@@ -1,0 +1,9 @@
+// Tests.xcconfig
+// Test target settings
+
+#include "Debug.xcconfig"
+
+// Testing
+ENABLE_TESTING_SEARCH_PATHS = YES
+TEST_HOST = $(BUILT_PRODUCTS_DIR)/M2DX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/M2DX
+BUNDLE_LOADER = $(TEST_HOST)

@@ -1,0 +1,17 @@
+// Release.xcconfig
+// Release-specific settings
+
+#include "Shared.xcconfig"
+
+// Optimization
+SWIFT_OPTIMIZATION_LEVEL = -O
+GCC_OPTIMIZATION_LEVEL = s
+SWIFT_COMPILATION_MODE = wholemodule
+
+// Debug
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+ENABLE_TESTABILITY = NO
+VALIDATE_PRODUCT = YES
+
+// Code Signing
+CODE_SIGN_IDENTITY = Apple Distribution
