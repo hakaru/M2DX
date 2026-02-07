@@ -4,11 +4,19 @@
 
 - [ ] MIDI2Kit の依存をローカルパス参照（`path: "../../MIDI2Kit"`）からリモートリポジトリ参照に切り替え＆ビルドテスト
 
+## 次回最優先 — ログ取得環境改善
+
+- [ ] macOS スタンドアローン版を作成（CoreMIDI/PE/CI ロジックの検証環境）
+  - log stream で Claude がリアルタイムにログ読取可能になる
+  - iOS の Copy Log 手動ペーストが不要に
+- [ ] macOS 版で PE/CI フロー検証（KeyStage USB 接続 → Mac）
+
 ## 検証（実機テスト）
 
+- [ ] program 0-9 で applyPreset による音色切替が動作するか確認
 - [ ] KeyStage LCD にプログラム名が表示されるか目視確認
-- [ ] macOS Console.app で subsystem "com.example.M2DX" のログ表示確認
 - [ ] PE Notify によるプログラム切替が KeyStage LCD に反映されるか確認
+- [ ] BLE MIDI 接続での動作確認（macOS/iOS 版安定後）
 
 ## 改善（優先度低）
 
