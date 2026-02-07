@@ -402,7 +402,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 1) {
-                        ForEach(Array(midiInput.debugLog.prefix(100).enumerated()), id: \.offset) { _, line in
+                        ForEach(Array(midiInput.debugLogReversed.prefix(100).enumerated()), id: \.offset) { _, line in
                             Text(line)
                                 .font(.system(size: 9, design: .monospaced))
                                 .lineLimit(2)
@@ -411,7 +411,7 @@ struct SettingsView: View {
                 }
                 HStack {
                     Button("Copy Log") {
-                        let text = midiInput.debugLog.reversed().joined(separator: "\n")
+                        let text = midiInput.debugLogReversed.joined(separator: "\n")
                         #if os(iOS)
                         UIPasteboard.general.string = text
                         #endif

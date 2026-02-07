@@ -134,19 +134,19 @@ public final class MIDIInputManager {
     public var receiveChannel: Int = 0
 
     /// Callback for note on events (note, velocity16)
-    public var onNoteOn: ((UInt8, UInt16) -> Void)?
+    public var onNoteOn: (@MainActor (UInt8, UInt16) -> Void)?
 
     /// Callback for note off events
-    public var onNoteOff: ((UInt8) -> Void)?
+    public var onNoteOff: (@MainActor (UInt8) -> Void)?
 
     /// Callback for control change events (cc, value32)
-    public var onControlChange: ((UInt8, UInt32) -> Void)?
+    public var onControlChange: (@MainActor (UInt8, UInt32) -> Void)?
 
     /// Callback for pitch bend events (value32, center=0x80000000)
-    public var onPitchBend: ((UInt32) -> Void)?
+    public var onPitchBend: (@MainActor (UInt32) -> Void)?
 
     /// Callback for program change events (program number 0-127)
-    public var onProgramChange: ((UInt8) -> Void)?
+    public var onProgramChange: (@MainActor (UInt8) -> Void)?
 
     // MARK: - Debug Info (visible on UI)
 
@@ -165,29 +165,36 @@ public final class MIDIInputManager {
     /// Debug: last parsed event description
     public private(set) var debugLastEvent: String = "(none)"
 
-    /// Debug: recent MIDI message log (newest first, max 200)
+    /// Debug: recent MIDI message log (append order, display reversed for newest-first)
     public private(set) var debugLog: [String] = []
     private let debugLogMax = 200
 
-    /// PE flow log: dedicated buffer for PE communication only (oldest first, unlimited during session)
+    /// Debug log displayed newest-first (computed from append-order storage)
+    public var debugLogReversed: [String] { debugLog.reversed() }
+
+    /// PE flow log: dedicated buffer for PE communication only (oldest first, max 2000)
     public private(set) var peFlowLog: [String] = []
+    private let peFlowLogMax = 2000
 
     /// Append a line to the debug log buffer (and route PE/CI to os.Logger)
     private func appendDebugLog(_ line: String) {
         print("[M2DX] \(line)")  // TEMP: devicectl --console 用
-        debugLog.insert(line, at: 0)
+        debugLog.append(line)
         if debugLog.count > debugLogMax {
-            debugLog.removeLast()
+            debugLog.removeFirst()
         }
         // PE/CI lines also go to peFlowLog for full history + os.Logger
         if line.hasPrefix("PE") {
             peFlowLog.append(line)
+            if peFlowLog.count > peFlowLogMax { peFlowLog.removeFirst() }
             peLogger.info("\(line, privacy: .public)")
         } else if line.hasPrefix("CI") {
             peFlowLog.append(line)
+            if peFlowLog.count > peFlowLogMax { peFlowLog.removeFirst() }
             ciLogger.info("\(line, privacy: .public)")
         } else if line.hasPrefix("SNIFF") {
             peFlowLog.append(line)
+            if peFlowLog.count > peFlowLogMax { peFlowLog.removeFirst() }
             peLogger.notice("\(line, privacy: .public)")
         } else {
             midiLogger.debug("\(line, privacy: .public)")
@@ -223,7 +230,7 @@ public final class MIDIInputManager {
 
     /// Start MIDI input manager
     public func start() {
-        // Reset program index so X-ProgramEdit returns valid bankPC on first query
+        // Reset program index for PE ChannelList programTitle
         currentProgramIndex = 0
 
         do {
@@ -240,14 +247,15 @@ public final class MIDIInputManager {
             let logger = CompositeMIDI2Logger(loggers: [osLogger, bufferLogger])
             self.compositeLogger = logger
 
-            // In sniffer mode, skip all PE/CI initialization — just log raw traffic
-            if peSnifferMode {
+            // DEBUG: Step-by-step PE/CI isolation to find KeyStage LCD hang cause
+            // Step 0: PE completely disabled (MIDI only) — CONFIRMED: no hang
+            // Step 1: CIManager only (no Discovery Inquiry, no PEResponder/PEManager)
+            // Step 2: CIManager + Discovery Inquiry (no PEResponder/PEManager)
+            // Step 3: Full PE/CI (original code)
+            let peIsolationStep = 3  // Full PE/CI with Subscribe disabled in ResourceList
+            if peIsolationStep == 0 || peSnifferMode {
                 appendDebugLog("SNIFF: Sniffer mode ON — PE Responder disabled")
             } else {
-                // Create CI/PE immediately so we can respond to KeyStage's Discovery Inquiry.
-                // We do NOT send our own Discovery — KeyStage discovers us as a Responder.
-                // Stale PE Reply (0x35) from previous sessions will arrive and be harmlessly
-                // ignored by PEManager as "unknownRequestID".
                 let sharedMUID = MUID(rawValue: 0x5404629)!
                 appendDebugLog("PE: sharedMUID=\(sharedMUID)")
 
@@ -264,37 +272,42 @@ public final class MIDIInputManager {
                         autoStartDiscovery: false,
                         respondToDiscovery: true,
                         registerFromInquiry: true,
-                        categorySupport: .propertyExchange,
+                        categorySupport: peIsolationStep >= 3 ? .propertyExchange : [],  // Step<3: no PE advertised
                         deviceIdentity: korgIdentity
                     ),
                     logger: logger
                 )
                 self.ciManager = ci
-                appendDebugLog("PE: CIManager.muid=\(ci.muid)")
+                appendDebugLog("PE: CIManager.muid=\(ci.muid) [step=\(peIsolationStep)]")
 
-                let responder = PEResponder(muid: sharedMUID, transport: midi)
-                self.peResponder = responder
-                Task { [weak self] in
-                    await responder.setLogCallback { resource, body, replySize in
-                        Task { @MainActor in
-                            self?.appendDebugLog("PE-Resp: \(resource) body=\(body.prefix(150)) reply=\(replySize)B")
+                if peIsolationStep >= 2 && peIsolationStep < 25 {
+                    // Step 2+: Add PEResponder + PEManager
+                    let responder = PEResponder(muid: sharedMUID, transport: midi)
+                    self.peResponder = responder
+                    Task { [weak self] in
+                        await responder.setLogCallback { resource, body, replySize in
+                            Task { @MainActor in
+                                self?.appendDebugLog("PE-Resp: \(resource) body=\(body.prefix(150)) reply=\(replySize)B")
+                            }
                         }
                     }
+                    Task { await self.registerPEResources(responder) }
+
+                    let pe = PEManager(transport: midi, sourceMUID: sharedMUID, sendStrategy: .single, logger: logger)
+                    self.peManager = pe
+                    Task { await pe.resetForExternalDispatch() }
                 }
-                Task { await self.registerPEResources(responder) }
 
-                let pe = PEManager(transport: midi, sourceMUID: sharedMUID, sendStrategy: .single, logger: logger)
-                self.peManager = pe
-                Task { await pe.resetForExternalDispatch() }
-
-                // Send Discovery Inquiry so KeyStage can discover our MUID.
-                // KeyStage does NOT send broadcast Discovery — it only talks to cached MUIDs.
-                // Without this, KeyStage will never know about M2DX.
-                Task {
-                    try? await Task.sleep(for: .seconds(1))
-                    await ci.sendDiscoveryInquiry()
-                    await MainActor.run {
-                        self.appendDebugLog("PE: Sent Discovery Inquiry")
+                if peIsolationStep == 25 || peIsolationStep >= 3 {
+                    // Step 2.5/3: Send Discovery Inquiry
+                    // Minimal delay — must beat KeyStage's own Discovery to be Initiator
+                    // When M2DX discovers first, KeyStage properly GETs our resources + subscribes
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        await ci.sendDiscoveryInquiry()
+                        await MainActor.run {
+                            self.appendDebugLog("PE: Sent Discovery Inquiry [step=\(peIsolationStep)]")
+                        }
                     }
                 }
             }
@@ -422,27 +435,19 @@ public final class MIDIInputManager {
                                    parsed.destinationMUID != ourMUID,
                                    parsed.destinationMUID != MUID.broadcast,
                                    data.count >= 14 {
-                                    var oldMUIDs = await MainActor.run { self.acceptedOldMUIDs }
-                                    // Auto-accept unknown MUIDs from PE messages.
-                                    // KeyStage caches old MUIDs and never sends broadcast
-                                    // Discovery, so we must accept whatever MUID it uses.
-                                    if !oldMUIDs.contains(parsed.destinationMUID) {
-                                        let cachedMUID = parsed.destinationMUID
-                                        await MainActor.run {
-                                            self.acceptedOldMUIDs.insert(cachedMUID)
-                                            self.appendDebugLog("PE: Auto-accepted MUID \(cachedMUID) from sub=\(subID2)")
-                                        }
-                                        oldMUIDs.insert(cachedMUID)
-                                    }
-                                    // Rewrite destination MUID to ours
-                                    let muidBytes = ourMUID.bytes
-                                    respData[10] = muidBytes[0]
-                                    respData[11] = muidBytes[1]
-                                    respData[12] = muidBytes[2]
-                                    respData[13] = muidBytes[3]
+                                    // Drop PE messages destined for other MUIDs (e.g. macOS MIDI-CI 0x1E204DF).
+                                    // Rewriting caused M2DX to respond to messages meant for the macOS entity,
+                                    // which made KeyStage receive duplicate responses and hang.
                                     await MainActor.run {
-                                        self.appendDebugLog("PE: rewrite \(parsed.destinationMUID)→\(ourMUID) sub=\(subID2)")
+                                        self.appendDebugLog("PE: DROP dst=\(parsed.destinationMUID) (not ours \(ourMUID)) sub=\(subID2)")
                                     }
+                                    shouldDispatch = false
+                                }
+                                // Drop Subscribe Reply (0x39) — these are KeyStage acknowledging our Notify.
+                                // No need to process them in PEResponder.
+                                if shouldDispatch && subID2Val == 0x39 {
+                                    peLogger.debug("PE: ignoring Subscribe Reply (0x39)")
+                                    shouldDispatch = false
                                 }
                                 if shouldDispatch {
                                     await resp.handleMessage(respData)
@@ -482,6 +487,24 @@ public final class MIDIInputManager {
                                 if let parsed = CIMessageParser.parse(data) {
                                     await MainActor.run {
                                         self.peCapabilityReady.insert(parsed.sourceMUID)
+                                    }
+                                }
+                            }
+
+                            // Handle Discovery Inquiry (0x70) from KORG —
+                            // Re-send our own Discovery Inquiry so KeyStage discovers M2DX as PE Responder.
+                            // Also invalidate macOS's built-in MIDI-CI MUID that intercepts PE flow.
+                            if subID2Val == 0x70 {
+                                if let ci = self.ciManager, let parsed = CIMessageParser.parse(data) {
+                                    let korgMUID = parsed.sourceMUID
+                                    await MainActor.run {
+                                        self.appendDebugLog("PE: Received Discovery from \(korgMUID), re-sending our Discovery")
+                                    }
+                                    // Brief delay to let KeyStage finish its Discovery broadcast
+                                    try? await Task.sleep(for: .milliseconds(200))
+                                    await ci.sendDiscoveryInquiry()
+                                    await MainActor.run {
+                                        self.appendDebugLog("PE: Re-sent Discovery Inquiry (triggered by KORG Discovery)")
                                     }
                                 }
                             }
@@ -615,27 +638,29 @@ public final class MIDIInputManager {
 
     // MARK: - Property Exchange
 
-    /// Current program index (for X-ProgramEdit dynamic response)
+    /// Current program index (for ChannelList programTitle in PE GET)
     private var currentProgramIndex: Int = 0
 
     /// Register PE resources (standard + KORG custom)
     private func registerPEResources(_ responder: PEResponder) async {
-        // ResourceList — advertise all resources including KORG custom
-        // Matches KORG Module Pro format: standard + X-ParameterList + X-ProgramEdit + JSONSchema
+        // ResourceList — 5 resources (X-ProgramEdit restored for LCD program name display)
+        // KeyStage LCD uses X-ProgramEdit.name for program name display, not ChannelList.programTitle.
+        // Previous hangs with 5 resources were caused by combination of MUID rewrite + fast Notify timing.
+        // Now: MUID DROP + 500ms delay should prevent hangs.
         await responder.registerResource("ResourceList", resource: ComputedResource(
             get: { _ in
                 Data("""
-                [{"resource":"DeviceInfo"},{"resource":"ChannelList","canSubscribe":true},{"resource":"ProgramList","canSubscribe":true},{"resource":"JSONSchema"},{"resource":"X-ParameterList","canSubscribe":true},{"resource":"X-ProgramEdit","canSubscribe":true}]
+                [{"resource":"DeviceInfo"},{"resource":"ChannelList","canSubscribe":true},{"resource":"ProgramList","canSubscribe":true},{"resource":"X-ParameterList","canSubscribe":true},{"resource":"X-ProgramEdit","canSubscribe":true}]
                 """.utf8)
             },
             responseHeader: { _, _ in
-                Data("{\"status\":200,\"totalCount\":6}".utf8)
+                Data("{\"status\":200,\"totalCount\":5}".utf8)
             }
         ))
 
         // DeviceInfo
         // KORG KeyStage checks manufacturerName to decide whether to request KORG-specific
-        // resources (X-ProgramEdit, X-ParameterList). Using "KORG" to enable full PE flow.
+        // resources (X-ParameterList). Using "KORG" to enable full PE flow.
         await responder.registerResource("DeviceInfo", resource: StaticResource(json: """
         {"manufacturerName":"KORG","productName":"M2DX DX7 Synthesizer","softwareVersion":"1.0","familyName":"FM Synthesizer","modelName":"DX7 Compatible"}
         """))
@@ -669,58 +694,31 @@ public final class MIDIInputManager {
 
         // MARK: KORG Custom Resources
 
-        // X-ProgramEdit — current program state (name + parameter values)
-        // KORG KeyStage subscribes to this and displays the program name on LCD.
-        // KeyStage sends PE SET (0x36) X-ProgramEdit to change the program
-        // (instead of MIDI Program Change) when it recognizes us as a KORG device.
+        // X-ProgramEdit — current program state (name + currentValues)
+        // KeyStage LCD displays program name from X-ProgramEdit.name field.
         await responder.registerResource("X-ProgramEdit", resource: ComputedResource(
             supportsSubscription: true,
             get: { [weak self] _ in
-                let idx = await MainActor.run { self?.currentProgramIndex ?? 0 }
-                let presets = DX7FactoryPresets.all
-                let name = idx < presets.count ? presets[idx].name : "INIT VOICE"
-                let json = "{\"name\":\"\(name)\",\"category\":\"FM Synth\",\"bankPC\":[0,0,\(idx)]}"
-                return Data(json.utf8)
-            },
-            set: { [weak self] _, body in
-                // KeyStage sends PE SET X-ProgramEdit with bankPC to change program.
-                // DO NOT send PE Notify for X-ProgramEdit back — the SET Reply (0x37)
-                // is the acknowledgment. Sending Notify for the same resource causes
-                // KeyStage to re-query in a loop and hang.
-                // Only update ChannelList (programTitle) via Notify.
-                if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-                   let bankPC = json["bankPC"] as? [Int],
-                   bankPC.count >= 3 {
-                    let programIndex = UInt8(clamping: bankPC[2])
-                    await MainActor.run {
-                        guard let self else { return }
-                        self.appendDebugLog("PE-SET X-ProgramEdit: bankPC=\(bankPC) → program=\(programIndex)")
-                        self.currentProgramIndex = Int(programIndex)
-                        // Update audio engine
-                        self.onProgramChange?(programIndex)
-                        // DO NOT send PE Notify — causes KeyStage hang.
-                        // State is updated; KeyStage will GET when needed.
-                    }
-                } else {
-                    await MainActor.run {
-                        let bodyStr = String(data: body.prefix(200), encoding: .utf8) ?? "(binary)"
-                        self?.appendDebugLog("PE-SET X-ProgramEdit: parse failed body=\(bodyStr)")
-                    }
+                let (name, idx) = await MainActor.run {
+                    (self?.currentProgramName ?? "INIT VOICE", self?.currentProgramIndex ?? 0)
                 }
-                return Data()
+                let json = "{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx)],\"currentValues\":[{\"name\":\"Mod Wheel\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Volume\",\"value\":100,\"displayValue\":\"100\",\"displayUnit\":\"\"},{\"name\":\"Expression\",\"value\":127,\"displayValue\":\"127\",\"displayUnit\":\"\"},{\"name\":\"Sustain\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Brightness\",\"value\":64,\"displayValue\":\"64\",\"displayUnit\":\"\"}]}"
+                return Data(json.utf8)
             }
         ))
 
         // X-ParameterList — CC parameter definitions for KeyStage display
+        // X-ParameterList — KeyStage expects {"name":"...","controlcc":N,"default":N} format
+        // per Keystage_PE_ResourceList v1.0 spec (no min/max fields)
         await responder.registerResource("X-ParameterList", resource: ComputedResource(
             supportsSubscription: true,
             get: { _ in
                 let params = [
-                    "{\"controlcc\":1,\"name\":\"Mod Wheel\",\"min\":0,\"max\":127}",
-                    "{\"controlcc\":7,\"name\":\"Volume\",\"min\":0,\"max\":127,\"default\":100}",
-                    "{\"controlcc\":11,\"name\":\"Expression\",\"min\":0,\"max\":127,\"default\":127}",
-                    "{\"controlcc\":64,\"name\":\"Sustain\",\"min\":0,\"max\":127}",
-                    "{\"controlcc\":74,\"name\":\"Brightness\",\"min\":0,\"max\":127,\"default\":64}"
+                    "{\"name\":\"Mod Wheel\",\"controlcc\":1,\"default\":0}",
+                    "{\"name\":\"Volume\",\"controlcc\":7,\"default\":100}",
+                    "{\"name\":\"Expression\",\"controlcc\":11,\"default\":127}",
+                    "{\"name\":\"Sustain\",\"controlcc\":64,\"default\":0}",
+                    "{\"name\":\"Brightness\",\"controlcc\":74,\"default\":64}"
                 ]
                 return Data("[\(params.joined(separator: ","))]".utf8)
             },
@@ -733,16 +731,22 @@ public final class MIDIInputManager {
         // JSONSchema — schema definitions for KORG custom resources
         // KeyStage requests resId:"parameterListSchema" and resId:"programEditSchema"
         await responder.registerResource("JSONSchema", resource: ComputedResource(
-            get: { header in
+            get: { [weak self] header in
                 let resId = header.resId ?? ""
+                let rawStr = String(data: header.rawData, encoding: .utf8) ?? "(nil)"
+                await MainActor.run {
+                    self?.appendDebugLog("PE-Schema: resId='\(resId)' raw=\(rawStr)")
+                }
                 switch resId {
                 case "parameterListSchema":
+                    // KeyStage expects name/controlcc/default schema per official spec
                     return Data("""
-                    {"title":"Parameter List","type":"array","items":{"type":"object","properties":{"controlcc":{"type":"integer"},"name":{"type":"string"},"min":{"type":"integer"},"max":{"type":"integer"},"default":{"type":"integer"}}}}
+                    {"type":"array","items":{"type":"object","properties":{"name":{"title":"Parameter Name","description":"Parameter Name","type":"string"},"controlcc":{"title":"Control CC","description":"CC number to control this parameter","type":"integer","minimum":0,"maximum":127},"default":{"title":"Default Value","description":"Default value for this parameter","type":"integer","minimum":0,"maximum":127}}}}
                     """.utf8)
                 case "programEditSchema":
+                    // KeyStage expects currentValues-based schema per official spec
                     return Data("""
-                    {"title":"Program Edit","type":"object","properties":{"name":{"type":"string"},"category":{"type":"string"},"bankPC":{"type":"array","items":{"type":"integer"}}}}
+                    {"type":"object","properties":{"currentValues":{"type":"array","items":{"type":"object","properties":{"name":{"title":"Parameter Name","description":"Parameter Name","type":"string"},"value":{"title":"Current Value","description":"Current value (Control Change value)","type":"integer","minimum":0,"maximum":127},"displayValue":{"title":"Display Value","description":"Current Value displayed on the UI (actual value)","type":"string"},"displayUnit":{"title":"Display Unit","description":"Unit text for this parameter","type":"string"}}}}}}
                     """.utf8)
                 default:
                     return Data("{}".utf8)
@@ -762,8 +766,7 @@ public final class MIDIInputManager {
 
     // MARK: - PE Notify (subscription updates on Program Change)
 
-    /// Notify all PE subscribers of a program change
-    /// KORG KeyStage subscribes to ChannelList, X-ProgramEdit, and potentially ProgramList
+    /// Handle program change: update internal state and send PE Notify to subscribers.
     private func notifyProgramChange(programIndex: UInt8) {
         currentProgramIndex = Int(programIndex)
         let name = currentProgramName
@@ -771,18 +774,48 @@ public final class MIDIInputManager {
         appendDebugLog("PC: program=\(idx) name=\(name)")
         peLogger.info("PC: program=\(idx) name=\(name, privacy: .public)")
 
-        // Debounced ChannelList Notify — only send after 500ms of no new PC.
-        // Rapid-fire Notify causes KeyStage to hang; debounce prevents this.
-        guard let responder = peResponder else { return }
-        pendingNotifyTask?.cancel()
-        pendingNotifyTask = Task {
+        guard let responder = peResponder else {
+            appendDebugLog("PE-Notify: no responder")
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            // Wait 500ms to ensure KeyStage has processed the PC message
             try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            let channelJSON = "[{\"channel\":1,\"title\":\"Channel 1\",\"programTitle\":\"\(name)\"}]"
-            await responder.notify(resource: "ChannelList", data: Data(channelJSON.utf8))
-            await MainActor.run {
-                self.appendDebugLog("PE-Notify: ChannelList → \(name)")
+
+            // Build exclude set: only send Notify to discovered PE devices (i.e. KORG KeyStage).
+            // macOS built-in MIDI-CI entity also subscribes but is not in discoveredPEDevices,
+            // so it gets excluded. Sending Notify to macOS entity causes spurious 0x39 replies.
+            let knownMUIDs = await MainActor.run {
+                Set(self.discoveredPEDevices.map(\.muid))
             }
+            let excludeMUIDs = await responder.subscriberMUIDs().subtracting(knownMUIDs)
+            if !excludeMUIDs.isEmpty {
+                peLogger.info("PE-Notify: excluding \(excludeMUIDs.count) non-KORG MUIDs: \(excludeMUIDs.map { String(describing: $0) }.joined(separator: ","), privacy: .public)")
+            }
+
+            // Notify ChannelList (programTitle update)
+            let channelListBody = Data("[{\"channel\":1,\"title\":\"Channel 1\",\"programTitle\":\"\(name)\"}]".utf8)
+            await MainActor.run {
+                self.appendDebugLog("PE-Notify: sending ChannelList programTitle=\(name)")
+            }
+            peLogger.info("PE-Notify: ChannelList body=\(String(data: channelListBody, encoding: .utf8) ?? "?", privacy: .public)")
+            await responder.notify(resource: "ChannelList", data: channelListBody, excludeMUIDs: excludeMUIDs)
+            peLogger.info("PE-Notify: ChannelList sent OK")
+
+            // Notify X-ProgramEdit (name + currentValues for LCD update)
+            // Uses 0x38 (Subscription) with command:notify header per MIDI-CI PE v1.1.
+            let xProgramEditBody = Data("{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx)],\"currentValues\":[{\"name\":\"Mod Wheel\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Volume\",\"value\":100,\"displayValue\":\"100\",\"displayUnit\":\"\"},{\"name\":\"Expression\",\"value\":127,\"displayValue\":\"127\",\"displayUnit\":\"\"},{\"name\":\"Sustain\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Brightness\",\"value\":64,\"displayValue\":\"64\",\"displayUnit\":\"\"}]}".utf8)
+            await MainActor.run {
+                self.appendDebugLog("PE-Notify: sending X-ProgramEdit name=\(name)")
+            }
+            peLogger.info("PE-Notify: X-ProgramEdit body=\(String(data: xProgramEditBody, encoding: .utf8) ?? "?", privacy: .public)")
+            await responder.notify(resource: "X-ProgramEdit", data: xProgramEditBody, excludeMUIDs: excludeMUIDs)
+
+            await MainActor.run {
+                self.appendDebugLog("PE-Notify: all sent OK")
+            }
+            peLogger.info("PE-Notify: all sent OK")
         }
     }
 

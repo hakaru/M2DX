@@ -242,15 +242,23 @@ public final class M2DXAudioEngine {
         #endif
     }
 
+    /// Whether a configuration change restart is already in progress (prevents re-entrant calls)
+    private var isRestarting = false
+
     /// Handle audio configuration change (e.g. output device switched)
     private func handleConfigurationChange() {
+        guard !isRestarting else { return }
+        isRestarting = true
         audioLogger.info("Configuration changed, restarting engine...")
         let wasRunning = isRunning
         stop()
         if wasRunning {
             Task {
                 await start()
+                isRestarting = false
             }
+        } else {
+            isRestarting = false
         }
     }
 

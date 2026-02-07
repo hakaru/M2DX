@@ -345,41 +345,114 @@ KORG が直接新 MUID に Cap Inquiry を送るのを待つ。固定 MUID な�
 
 ### X-ParameterList（KORG 独自リソース）
 
+**KORG公式仕様 (Keystage_PE_ResourceList v1.0 2023/8/31):**
+
 ```json
 [
-  {"controlcc": 1, "name": "Mod Wheel", "min": 0, "max": 127},
-  {"controlcc": 7, "name": "Volume", "min": 0, "max": 127, "default": 100},
-  {"controlcc": 11, "name": "Expression", "min": 0, "max": 127, "default": 127},
-  {"controlcc": 64, "name": "Sustain", "min": 0, "max": 127},
-  {"controlcc": 74, "name": "Brightness", "min": 0, "max": 127, "default": 64}
+  {"name": "Perf Master Mod", "controlcc": 24, "default": 0},
+  {"name": "Perf Timing Mod", "controlcc": 25, "default": 0},
+  {"name": "Perf Sample Mod", "controlcc": 26, "default": 0}
 ]
 ```
 
-- CC パラメータの名前とレンジをKeyStageに通知
-- `controlcc`: MIDI CC 番号
+**M2DX実装:**
+
+```json
+[
+  {"name": "Mod Wheel", "controlcc": 1, "default": 64},
+  {"name": "Volume", "controlcc": 7, "default": 100},
+  {"name": "Expression", "controlcc": 11, "default": 127},
+  {"name": "Sustain", "controlcc": 64, "default": 0},
+  {"name": "Brightness", "controlcc": 74, "default": 64}
+]
+```
+
+- CC パラメータの名前とデフォルト値をKeyStageに通知
 - `name`: パラメータ表示名
-- `min`, `max`: 値の範囲
+- `controlcc`: MIDI CC 番号
 - `default`: デフォルト値（オプション）
+- **注意**: `min`/`max` フィールドはKORG公式仕様に存在しない（削除済み）
 
 **レスポンスヘッダー**: `{"status":200,"totalCount":5}` ← ★totalCount 必須
 
+**JSONSchema (parameterListSchema):**
+```json
+{
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "name": {"title": "Parameter Name", "type": "string"},
+      "controlcc": {"title": "Control CC", "type": "integer", "minimum": 0, "maximum": 127},
+      "default": {"title": "Default Value", "type": "integer", "minimum": 0, "maximum": 127}
+    }
+  }
+}
+```
+
 ### X-ProgramEdit（KORG 独自リソース）
+
+**★ KORG公式仕様 (Keystage_PE_ResourceList v1.0 2023/8/31) — currentValues形式必須:**
+
+```json
+{
+  "currentValues": [
+    {"name": "Perf Master Mod", "value": 0, "displayValue": "0.0", "displayUnit": "%"},
+    {"name": "Perf Timing Mod", "value": 0, "displayValue": "0.0", "displayUnit": "%"},
+    {"name": "Perf Sample Mod", "value": 64, "displayValue": "50.0", "displayUnit": "%"}
+  ]
+}
+```
+
+**M2DX実装（name フィールド追加でプログラム名表示対応）:**
 
 ```json
 {
   "name": "INIT VOICE",
-  "category": "FM Synth",
-  "bankPC": [0, 0, 0]
+  "currentValues": [
+    {"name": "Mod Wheel", "value": 64, "displayValue": "64", "displayUnit": ""},
+    {"name": "Volume", "value": 100, "displayValue": "100", "displayUnit": ""},
+    {"name": "Expression", "value": 127, "displayValue": "127", "displayUnit": ""},
+    {"name": "Sustain", "value": 0, "displayValue": "0", "displayUnit": ""},
+    {"name": "Brightness", "value": 64, "displayValue": "64", "displayUnit": ""}
+  ]
 }
 ```
 
-- 現在のプログラムの詳細情報
-- `name`: プログラム名
-- `category`: カテゴリ名
-- `bankPC`: 現在の Bank/Program 位置 `[MSB, LSB, Program]`
+- **`currentValues` フィールドが必須** — KeyStageはこのフィールドをパースし、存在しないとハングする
+- `name`: プログラム名（KeyStage LCD に表示される）
+- `currentValues[].name`: パラメータ名
+- `currentValues[].value`: 現在のCC値 (0-127)
+- `currentValues[].displayValue`: UI表示用の値文字列
+- `currentValues[].displayUnit`: 単位テキスト（"%", "ms" 等）
 - Program Change 受信時に Subscription Notify で更新を通知
 
+**★★★ ハング根本原因 (2026-02-08):**
+以前のM2DX実装は KORG Module Pro 形式 `{"name":"...","category":"...","bankPC":[...]}` を使用していたが、
+KeyStageは `currentValues` フィールドを必須としてパースするため、フィールド不在でハングしていた。
+
 **レスポンスヘッダー**: `{"status":200}` （単一オブジェクトなので totalCount 不要）
+
+**JSONSchema (programEditSchema):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "currentValues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"title": "Parameter Name", "type": "string"},
+          "value": {"title": "Current Value", "type": "integer", "minimum": 0, "maximum": 127},
+          "displayValue": {"title": "Display Value", "type": "string"},
+          "displayUnit": {"title": "Display Unit", "type": "string"}
+        }
+      }
+    }
+  }
+}
+```
 
 ### JSONSchema
 
@@ -387,8 +460,8 @@ KORG が直接新 MUID に Cap Inquiry を送るのを待つ。固定 MUID な�
 {}
 ```
 
-- KORG は `resId=""` で 2 回 GET する
-- 現在は空オブジェクト `{}` を返している（スキーマ未定義）
+- KORG は `resId=""` で 2 回 GET する（parameterListSchema, programEditSchema を要求）
+- 現在は空オブジェクト `{}` を返している（resId パース調査中）
 
 **レスポンスヘッダー**: `{"status":200}`
 
@@ -651,9 +724,20 @@ kill $BGPID
 - **原因**: Manual Cap Reply ロジックが他デバイスの MUID も受け入れていた
 - **解決**: Manual Cap Reply を完全廃止、KORG が直接新 MUID に接続するのを待つ
 
+### Phase 7: ★★★ X-ProgramEdit currentValues 形式（KeyStageハング解決）(2026-02-08)
+- **問題**: X-ProgramEdit GET Reply 後に KeyStage の LCD 固着・ノブ無反応（完全ハング）
+- **原因**: M2DXが KORG Module Pro 形式 `{"name":"...","category":"...","bankPC":[...]}` で応答していたが、
+  KeyStage は `currentValues` フィールドを必須として期待 `{"currentValues":[{"name":"...","value":N,"displayValue":"...","displayUnit":"..."}]}`
+- **切り分け手順**: PE完全無効(Step 0) → CIManager(Step 1) → PEResponder(Step 2) → Discovery(Step 2.5) → フルPE(Step 3) → リソース段階追加 → X-ProgramEdit特定
+- **解決**: KORG公式仕様 (Keystage_PE_ResourceList v1.0) に準拠し currentValues 形式に修正
+- **副次発見**:
+  - manufacturerName="KORG" でないとKeyStageはX-ProgramEditをGETしない
+  - X-ParameterList の min/max フィールドはKORG仕様に存在しない（削除）
+  - macOS版で log stream リアルタイムデバッグ環境を確立
+
 ---
 
-## 13. 現状（2026-02-07 15:58 時点）
+## 13. 現状（2026-02-08 05:36 時点）
 
 ### 動作確認済み
 
@@ -662,16 +746,20 @@ kill $BGPID
 - [x] ChannelList Subscribe成功（1-based channel）
 - [x] ProgramList GET Reply成功（totalCount付きヘッダー）
 - [x] ★ **全リソース totalCount ヘッダー追加**
-- [x] ★ **X-ParameterList 5パラメータ応答成功**
-- [x] ★ **X-ProgramEdit 応答成功**
+- [x] ★ **X-ParameterList 5パラメータ応答成功（min/max削除、KORG公式仕様準拠）**
+- [x] ★ **X-ProgramEdit currentValues形式で応答成功（ハング解決）**
 - [x] ★ **全 Subscribe 成功（sub-1 ~ sub-4）**
 - [x] ★ **PE Notify 動作確認（Program Change → ChannelList + X-ProgramEdit 通知）**
 - [x] 固定 MUID でキャッシュ問題解消
 - [x] Manual Cap Reply 廃止
 - [x] stop() で Invalidate MUID 送信
+- [x] ★★★ **KeyStageハング根本原因特定・解決（X-ProgramEdit currentValues形式）**
+- [x] macOS版 log stream によるリアルタイムデバッグ環境確立
+- [x] PE Notify 再有効化（50msデバウンス + currentValues形式）
 
-### 確認待ち
+### 確認待ち / 調査中
 
+- [ ] JSONSchema resId パース問題（parameterListSchema/programEditSchema が {} を返す）
 - [ ] KeyStage LCD にプログラム名が表示されるか（目視確認）
 - [ ] デバッグ print 文のクリーンアップ
 - [ ] コミット
@@ -680,8 +768,24 @@ kill $BGPID
 
 ## 14. 参考資料
 
-- KORG KeyStage PE MIDI Implementation: `Keystage_PE_MIDIimp.txt`
-- KORG KeyStage PE Resource List: `Keystage_PE_ResourceList.txt`
+### KORG公式仕様（~/Downloads/ に保存済み）
+
+| ファイル | バージョン | 内容 |
+|---------|-----------|------|
+| `Keystage_PE_ResourceList.txt` | v1.0 2023/8/31 | PE Resource List仕様（送信/受信リソース定義、JSONスキーマ） |
+| `Keystage_PE_ResourceList 2.txt` | v1.0 2023/8/31 | 同上（重複コピー） |
+| `Keystage_PE_MIDIimp.txt` | v1.00 2023.8.31 | PE MIDI Implementation（SysExバイト構造、全PEメッセージ定義） |
+| `Keystage_MIDIimp.txt` | v1.00 2023.8.31 | フルMIDI Implementation（Channel/SysEx/NativeMode/ParameterChange） |
+
+### KeyStage PE仕様の要点
+
+- **送信(TRANSMITTED)**: ResourceList, DeviceInfo, ChannelList のみ
+- **受信(RECOGNIZED RECEIVE)**: X-ParameterList, X-ProgramEdit（カスタムリソース）
+- **modelId**: [1,0]=Keystage-49, [9,0]=Keystage-61
+- **ChannelList Subscribe**: Global MIDI Ch変更時に通知
+
+### その他の参考資料
+
 - KORG Module Pro PE 調査: `SimpleMidiController/Docs/KORG_PropertyExchange_Investigation.md`
 - KORG KeyStage System Updater: https://www.korg.com/us/support/download/software/0/927/5079/
 - MIDI-CI PE Common Rules: [M2-103-UM (AMEI)](https://amei.or.jp/midistandardcommittee/MIDI2.0/MIDI2.0-DOCS/M2-103-UM_v1-1_Common_Rules_for_MIDI-CI_Property_Exchange.pdf)

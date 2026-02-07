@@ -12,6 +12,59 @@ private let kNumAlgorithms = 32
 private let kVoiceNormalizationScale: Float = 3.0
 private let kTwoPi: Float = 2.0 * .pi
 
+// MARK: - Sine LUT (4096 entries, 16KB, fits in L1 cache)
+
+private let kSineLUTSize = 4096
+private let kSineLUTMask = kSineLUTSize - 1
+nonisolated(unsafe) private let kSineLUT: UnsafePointer<Float> = {
+    let buf = UnsafeMutablePointer<Float>.allocate(capacity: kSineLUTSize + 1)
+    for i in 0...kSineLUTSize {
+        buf[i] = sinf(Float(i) / Float(kSineLUTSize) * 2.0 * .pi)
+    }
+    return UnsafePointer(buf)
+}()
+
+/// Fast sine approximation using LUT with linear interpolation.
+/// Input is in radians.
+@inline(__always)
+private func fastSin(_ radians: Float) -> Float {
+    // Normalize to 0..<1 range (one full cycle)
+    var phase = radians * (1.0 / kTwoPi)
+    phase -= floorf(phase)  // wrap to [0, 1)
+    let fIndex = phase * Float(kSineLUTSize)
+    let i = Int(fIndex) & kSineLUTMask
+    let frac = fIndex - Float(Int(fIndex))
+    return kSineLUT[i] + frac * (kSineLUT[i + 1] - kSineLUT[i])
+}
+
+// MARK: - Pitch Bend LUT (1024 entries, ±2 semitones)
+
+private let kPitchBendLUTSize = 1024
+nonisolated(unsafe) private let kPitchBendLUT: UnsafePointer<Float> = {
+    // Maps index 0..<1024 to ±2 semitones pitch bend factor
+    // index 512 = center (factor 1.0)
+    let buf = UnsafeMutablePointer<Float>.allocate(capacity: kPitchBendLUTSize)
+    for i in 0..<kPitchBendLUTSize {
+        let normalized = Float(i) / Float(kPitchBendLUTSize - 1)  // 0..1
+        let semitones = (normalized * 2.0 - 1.0) * 2.0  // -2..+2
+        buf[i] = powf(2.0, semitones / 12.0)
+    }
+    return UnsafePointer(buf)
+}()
+
+/// Look up pitch bend factor from ±2 semitone range using LUT with linear interpolation.
+/// Input: semitones in range [-2, +2]
+@inline(__always)
+private func fastPitchBendFactor(_ semitones: Float) -> Float {
+    // Map -2..+2 to 0..1023
+    let normalized = (semitones + 2.0) * 0.25  // 0..1
+    let fIndex = normalized * Float(kPitchBendLUTSize - 1)
+    let clamped = max(0, min(Float(kPitchBendLUTSize - 2), fIndex))
+    let i = Int(clamped)
+    let frac = clamped - Float(i)
+    return kPitchBendLUT[i] + frac * (kPitchBendLUT[i + 1] - kPitchBendLUT[i])
+}
+
 /// Fast tanh approximation for soft clipping (Pade approximant)
 @inline(__always)
 private func tanhApprox(_ x: Float) -> Float {
@@ -150,7 +203,7 @@ private struct FMOp {
     mutating func process(_ mod: Float = 0) -> Float {
         let envLevel = env.process()
         let fbMod = feedback * (prev1 + prev2) * 0.5
-        let output = sinf((phase + mod + fbMod) * kTwoPi) * envLevel * level
+        let output = fastSin((phase + mod + fbMod) * kTwoPi) * envLevel * level
         phase += phaseInc
         if phase >= 1.0 { phase -= 1.0 }
         prev2 = prev1; prev1 = output
@@ -422,83 +475,172 @@ private struct Voice {
         default: break
         }
     }
+
+    /// Apply per-operator parameters from a snapshot (level, ratio, detune, feedback, EG)
+    mutating func applyParams(_ params: OperatorSnapshot, opIndex: Int) {
+        withOp(opIndex) { op in
+            op.level = params.level
+            op.ratio = params.ratio
+            op.detune = params.detune
+            op.feedback = params.feedback
+            op.env.setRates(params.egR0, params.egR1, params.egR2, params.egR3)
+            op.env.setLevels(params.egL0, params.egL1, params.egL2, params.egL3)
+        }
+    }
+}
+
+// MARK: - Parameter Snapshot (UI → Audio thread)
+
+/// Per-operator parameters set from the UI thread
+private struct OperatorSnapshot {
+    var level: Float = 1.0
+    var ratio: Float = 1.0
+    var detune: Float = 1.0
+    var feedback: Float = 0.0
+    var egR0: Float = 99, egR1: Float = 75, egR2: Float = 50, egR3: Float = 50
+    var egL0: Float = 1.0, egL1: Float = 0.8, egL2: Float = 0.7, egL3: Float = 0.0
+}
+
+/// All UI-controlled parameters bundled for atomic snapshot transfer
+private struct SynthParamSnapshot {
+    var ops: (OperatorSnapshot, OperatorSnapshot, OperatorSnapshot,
+              OperatorSnapshot, OperatorSnapshot, OperatorSnapshot)
+    var algorithm: Int = 0
+    var masterVolume: Float = 0.7
+    var sampleRate: Float = 44100
+    var version: UInt64 = 0  // incremented on every parameter change
 }
 
 // MARK: - FMSynthEngine
 
 /// Pure-Swift FM synth engine.
-/// Thread-safety: `NSLock` protects mutable state.
+///
+/// Thread-safety strategy:
+/// - `os_unfair_lock` protects only the parameter snapshot swap (sub-microsecond hold time).
+/// - The audio render thread copies the snapshot once per buffer, then runs lock-free.
+/// - MIDI events flow through a separate lock-free ring buffer (`MIDIEventQueue`).
 final class FMSynthEngine: @unchecked Sendable {
 
-    private let lock = NSLock()
+    /// Lock protecting only the parameter snapshot transfer
+    private var paramLock = os_unfair_lock()
 
-    // Voices stored as Array (heap-allocated, avoids stack overflow from large tuples)
+    /// Parameter snapshot written by UI, read by audio thread
+    private var pendingParams = SynthParamSnapshot(
+        ops: (OperatorSnapshot(), OperatorSnapshot(), OperatorSnapshot(),
+              OperatorSnapshot(), OperatorSnapshot(), OperatorSnapshot())
+    )
+
+    /// Last snapshot version applied by the render thread
+    private var appliedVersion: UInt64 = 0
+
+    // Render-thread-only state (never accessed from UI thread)
     private var voices: [Voice] = Array(repeating: Voice(), count: kMaxVoices)
     private var sampleRate: Float = 44100
     private var masterVolume: Float = 0.7
     private var algorithm: Int = 0
     private var sustainPedalOn: Bool = false
-    private var pitchBendFactor: Float = 1.0  // current pitch bend (semitones ±2)
+    private var pitchBendFactor: Float = 1.0
 
     /// MIDI event queue (UI → audio)
     let midiQueue = MIDIEventQueue()
 
-    // MARK: - Setup
+    // MARK: - UI Thread Parameter Setters
+
+    /// Increment version and mark params as dirty (call under paramLock)
+    @inline(__always)
+    private func bumpVersion() {
+        pendingParams.version &+= 1
+    }
 
     func setSampleRate(_ sr: Float) {
-        lock.lock(); defer { lock.unlock() }
-        sampleRate = sr
-        for i in 0..<kMaxVoices { voices[i].setSampleRate(sr) }
+        os_unfair_lock_lock(&paramLock)
+        pendingParams.sampleRate = sr
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
     }
 
     func setAlgorithm(_ alg: Int) {
-        lock.lock(); defer { lock.unlock() }
         let clamped = max(0, min(kNumAlgorithms - 1, alg))
-        algorithm = clamped
-        for i in 0..<kMaxVoices { voices[i].algorithm = clamped }
+        os_unfair_lock_lock(&paramLock)
+        pendingParams.algorithm = clamped
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
     }
 
     func setMasterVolume(_ vol: Float) {
-        lock.lock(); defer { lock.unlock() }
-        masterVolume = max(0, min(1, vol))
+        os_unfair_lock_lock(&paramLock)
+        pendingParams.masterVolume = max(0, min(1, vol))
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
     }
 
     // MARK: - Per-operator parameter setters
 
     func setOperatorLevel(_ opIndex: Int, level: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
-        lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.level = level } }
+        os_unfair_lock_lock(&paramLock)
+        withPendingOp(opIndex) { $0.level = level }
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
     }
 
     func setOperatorRatio(_ opIndex: Int, ratio: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
-        lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.ratio = ratio } }
+        os_unfair_lock_lock(&paramLock)
+        withPendingOp(opIndex) { $0.ratio = ratio }
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
     }
 
     func setOperatorDetune(_ opIndex: Int, cents: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
-        lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.setDetuneCents(cents) } }
+        let detuneValue = powf(2.0, cents / 1200.0)
+        os_unfair_lock_lock(&paramLock)
+        withPendingOp(opIndex) { $0.detune = detuneValue }
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
     }
 
     func setOperatorFeedback(_ opIndex: Int, feedback: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
-        lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.feedback = feedback } }
+        os_unfair_lock_lock(&paramLock)
+        withPendingOp(opIndex) { $0.feedback = feedback }
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
     }
 
     func setOperatorEGRates(_ opIndex: Int, r1: Float, r2: Float, r3: Float, r4: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
-        lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.env.setRates(r1, r2, r3, r4) } }
+        os_unfair_lock_lock(&paramLock)
+        withPendingOp(opIndex) {
+            $0.egR0 = r1; $0.egR1 = r2; $0.egR2 = r3; $0.egR3 = r4
+        }
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
     }
 
     func setOperatorEGLevels(_ opIndex: Int, l1: Float, l2: Float, l3: Float, l4: Float) {
         guard opIndex >= 0, opIndex < kNumOperators else { return }
-        lock.lock(); defer { lock.unlock() }
-        for i in 0..<kMaxVoices { voices[i].withOp(opIndex) { $0.env.setLevels(l1, l2, l3, l4) } }
+        os_unfair_lock_lock(&paramLock)
+        withPendingOp(opIndex) {
+            $0.egL0 = l1; $0.egL1 = l2; $0.egL2 = l3; $0.egL3 = l4
+        }
+        bumpVersion()
+        os_unfair_lock_unlock(&paramLock)
+    }
+
+    /// Access a pending operator snapshot by index
+    @inline(__always)
+    private func withPendingOp(_ i: Int, _ body: (inout OperatorSnapshot) -> Void) {
+        switch i {
+        case 0: body(&pendingParams.ops.0)
+        case 1: body(&pendingParams.ops.1)
+        case 2: body(&pendingParams.ops.2)
+        case 3: body(&pendingParams.ops.3)
+        case 4: body(&pendingParams.ops.4)
+        case 5: body(&pendingParams.ops.5)
+        default: break
+        }
     }
 
     // MARK: - Render (called from audio thread)
@@ -506,41 +648,70 @@ final class FMSynthEngine: @unchecked Sendable {
     func render(into bufferL: UnsafeMutablePointer<Float>,
                 bufferR: UnsafeMutablePointer<Float>,
                 frameCount: Int) {
-        lock.lock(); defer { lock.unlock() }
 
-        // 1. Drain MIDI events
-        let events = midiQueue.drain()
-        for event in events {
-            switch event.kind {
-            case .noteOn:
-                let vel16 = UInt16(event.data2 & 0xFFFF)
-                if vel16 == 0 { doNoteOff(event.data1) }
-                else { doNoteOn(event.data1, velocity16: vel16) }
-            case .noteOff:
-                doNoteOff(event.data1)
-            case .controlChange:
-                doControlChange(event.data1, value32: event.data2)
-            case .pitchBend:
-                doPitchBend32(event.data2)
+        // 1. Snapshot parameter swap (minimal lock hold time)
+        os_unfair_lock_lock(&paramLock)
+        let snapshot = pendingParams
+        os_unfair_lock_unlock(&paramLock)
+
+        // 2. Apply parameter changes if version bumped
+        if snapshot.version != appliedVersion {
+            appliedVersion = snapshot.version
+
+            if snapshot.sampleRate != sampleRate {
+                sampleRate = snapshot.sampleRate
+                for i in 0..<kMaxVoices { voices[i].setSampleRate(sampleRate) }
+            }
+
+            algorithm = snapshot.algorithm
+            masterVolume = snapshot.masterVolume
+
+            for i in 0..<kMaxVoices {
+                voices[i].algorithm = algorithm
+                voices[i].applyParams(snapshot.ops.0, opIndex: 0)
+                voices[i].applyParams(snapshot.ops.1, opIndex: 1)
+                voices[i].applyParams(snapshot.ops.2, opIndex: 2)
+                voices[i].applyParams(snapshot.ops.3, opIndex: 3)
+                voices[i].applyParams(snapshot.ops.4, opIndex: 4)
+                voices[i].applyParams(snapshot.ops.5, opIndex: 5)
             }
         }
 
-        // 2. Render
+        // 3. Drain MIDI events (lock-free ring buffer)
+        midiQueue.drain { event in
+            switch event.kind {
+            case .noteOn:
+                let vel16 = UInt16(event.data2 & 0xFFFF)
+                if vel16 == 0 { self.doNoteOff(event.data1) }
+                else { self.doNoteOn(event.data1, velocity16: vel16) }
+            case .noteOff:
+                self.doNoteOff(event.data1)
+            case .controlChange:
+                self.doControlChange(event.data1, value32: event.data2)
+            case .pitchBend:
+                self.doPitchBend32(event.data2)
+            }
+        }
+
+        // 4. Render (entirely lock-free from here)
         let vol = masterVolume
+
+        // Pre-compute active voice count and normalization factor (once per buffer)
+        for i in 0..<kMaxVoices { voices[i].checkActive() }
+        var activeCount = 0
+        for i in 0..<kMaxVoices { if voices[i].active { activeCount += 1 } }
+        let invNorm: Float = activeCount > 0
+            ? 1.0 / (sqrtf(Float(activeCount)) * kVoiceNormalizationScale)
+            : 0
+
         for frame in 0..<frameCount {
             var output: Float = 0
-            var activeCount = 0
             for i in 0..<kMaxVoices {
-                voices[i].checkActive()
                 if voices[i].active {
                     output += voices[i].process()
-                    activeCount += 1
                 }
             }
-            if activeCount > 0 {
-                output /= sqrtf(Float(activeCount)) * kVoiceNormalizationScale
-            }
-            let sample = output * vol
+            let sample = output * invNorm * vol
             // Soft clipping (tanh-style) to prevent harsh digital distortion
             let clipped = sample > 1.0 || sample < -1.0
                 ? tanhApprox(sample)
@@ -550,7 +721,7 @@ final class FMSynthEngine: @unchecked Sendable {
         }
     }
 
-    // MARK: - MIDI handling (must be called under lock)
+    // MARK: - MIDI handling (audio thread only, no lock needed)
 
     private func doNoteOn(_ note: UInt8, velocity16: UInt16) {
         var target = 0
@@ -595,7 +766,7 @@ final class FMSynthEngine: @unchecked Sendable {
         // 32-bit unsigned: center = 0x80000000
         let signed = Int64(value) - 0x80000000
         let semitones = Float(signed) / Float(0x80000000) * 2.0  // ±2 semitones
-        pitchBendFactor = powf(2.0, semitones / 12.0)
+        pitchBendFactor = fastPitchBendFactor(semitones)
         for i in 0..<kMaxVoices {
             if voices[i].active {
                 voices[i].applyPitchBend(pitchBendFactor)

@@ -80,8 +80,9 @@ public struct M2DXRootView: View {
             }
             midiInput.start()
 
+            // Keep alive until view disappears (.task cancels automatically)
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(86400))
             }
             midiInput.stop()
             audioEngine.stop()
