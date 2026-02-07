@@ -5,6 +5,8 @@ import CoreAudio
 import M2DXCore
 import os
 
+private let audioLogger = Logger(subsystem: "com.example.M2DX", category: "Audio")
+
 // MARK: - Audio Engine Errors
 
 /// Errors that can occur during audio engine operations
@@ -94,7 +96,7 @@ public final class M2DXAudioEngine {
             let message = (error as? AudioEngineError)?.errorDescription
                 ?? "Failed to start audio engine: \(error.localizedDescription)"
             errorMessage = message
-            print("M2DXAudioEngine: \(message)")
+            audioLogger.error("\(message, privacy: .public)")
         }
     }
 
@@ -120,7 +122,7 @@ public final class M2DXAudioEngine {
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
-            print("M2DXAudioEngine: Failed to deactivate audio session: \(error)")
+            audioLogger.warning("Failed to deactivate audio session: \(error.localizedDescription, privacy: .public)")
         }
         #endif
 
@@ -242,7 +244,7 @@ public final class M2DXAudioEngine {
 
     /// Handle audio configuration change (e.g. output device switched)
     private func handleConfigurationChange() {
-        print("M2DXAudioEngine: Configuration changed, restarting engine...")
+        audioLogger.info("Configuration changed, restarting engine...")
         let wasRunning = isRunning
         stop()
         if wasRunning {
@@ -361,7 +363,7 @@ public final class M2DXAudioEngine {
             // Restart to apply the new device
             handleConfigurationChange()
         } else {
-            print("M2DXAudioEngine: Failed to set output device: \(status)")
+            audioLogger.error("Failed to set output device: \(status, privacy: .public)")
         }
     }
     #endif

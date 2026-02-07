@@ -1,5 +1,8 @@
 import Foundation
 import AudioToolbox
+import os
+
+private let bridgeLogger = Logger(subsystem: "com.example.M2DX", category: "PEBridge")
 
 // MARK: - PE Bridge
 
@@ -101,7 +104,7 @@ public final class M2DXPEBridge: @unchecked Sendable {
             try peResource.setPropertyFromFloat(path, floatValue: value)
         } catch {
             // Log error but don't throw - AU changes should not fail
-            print("M2DXPEBridge: Failed to sync AU->PE for \(path): \(error)")
+            bridgeLogger.error("Failed to sync AU->PE for \(path, privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -211,7 +214,7 @@ public final class M2DXPEBridge: @unchecked Sendable {
                 do {
                     try peResource.setPropertyFromFloat(mapping.path, floatValue: param.value)
                 } catch {
-                    print("M2DXPEBridge: Failed to sync \(mapping.path): \(error)")
+                    bridgeLogger.error("Failed to sync \(mapping.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
             }
         }

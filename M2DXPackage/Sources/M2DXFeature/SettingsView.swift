@@ -41,6 +41,9 @@ struct SettingsView: View {
                 // ── Connected Devices ──
                 devicesSection
 
+                // ── MIDI-CI Property Exchange ──
+                propertyExchangeSection
+
                 // ── MIDI Debug ──
                 midiDebugSection
 
@@ -231,6 +234,103 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Property Exchange Section
+
+    private var propertyExchangeSection: some View {
+        Section {
+            // Discover button
+            Button {
+                Task { await midiInput.startCIDiscovery() }
+            } label: {
+                Label("Discover MIDI-CI Devices", systemImage: "magnifyingglass")
+            }
+
+            // Discovered PE devices
+            if midiInput.discoveredPEDevices.isEmpty {
+                HStack {
+                    Image(systemName: "pianokeys.inverse")
+                        .foregroundStyle(.secondary)
+                    Text("No PE devices found")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+            } else {
+                ForEach(midiInput.discoveredPEDevices) { device in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(device.displayName)
+                                .font(.body)
+                            Text("MUID: \(device.muid)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Query") {
+                            Task { await midiInput.queryRemoteProgramList(device: device) }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(midiInput.isPEQueryInProgress)
+                    }
+                }
+            }
+
+            // PE status
+            if !midiInput.peStatusMessage.isEmpty {
+                HStack {
+                    if midiInput.isPEQueryInProgress {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(midiInput.peStatusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // Remote program list
+            if !midiInput.remoteProgramList.isEmpty {
+                DisclosureGroup("Programs (\(midiInput.remoteProgramList.count))") {
+                    ForEach(midiInput.remoteProgramList) { program in
+                        HStack {
+                            Text("\(program.programNumber)")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 30, alignment: .trailing)
+                            Text(program.displayName)
+                                .font(.body)
+                        }
+                    }
+                }
+            }
+            // Sniffer mode toggle
+            Toggle(isOn: Binding(
+                get: { midiInput.peSnifferMode },
+                set: { newValue in
+                    midiInput.peSnifferMode = newValue
+                    // Restart MIDI to apply mode change
+                    midiInput.stop()
+                    midiInput.start()
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("PE Sniffer Mode")
+                    Text("Disable PE Responder and log all CI traffic. Run alongside KORG Module to observe.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("MIDI-CI Property Exchange")
+        } footer: {
+            if midiInput.peSnifferMode {
+                Text("Sniffer mode ON — PE Responder disabled. Use Console.app (subsystem: com.example.M2DX) to view logs.")
+            } else {
+                Text("Discover and query MIDI-CI PE devices for program lists.")
+            }
+        }
+    }
+
     // MARK: - MIDI Debug Section
 
     private var midiDebugSection: some View {
@@ -302,17 +402,55 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 1) {
-                        ForEach(Array(midiInput.debugLog.enumerated()), id: \.offset) { _, line in
+                        ForEach(Array(midiInput.debugLog.prefix(100).enumerated()), id: \.offset) { _, line in
                             Text(line)
                                 .font(.system(size: 9, design: .monospaced))
                                 .lineLimit(2)
                         }
                     }
                 }
-                Button("Clear Log") {
-                    midiInput.clearDebugLog()
+                HStack {
+                    Button("Copy Log") {
+                        let text = midiInput.debugLog.reversed().joined(separator: "\n")
+                        #if os(iOS)
+                        UIPasteboard.general.string = text
+                        #endif
+                    }
+                    .font(.caption)
+                    Button("Clear Log") {
+                        midiInput.clearDebugLog()
+                    }
+                    .font(.caption)
                 }
-                .font(.caption)
+            }
+
+            // PE Flow Log — dedicated PE/CI communication history
+            DisclosureGroup("PE Flow Log (\(midiInput.peFlowLog.count))") {
+                if midiInput.peFlowLog.isEmpty {
+                    Text("(no PE/CI traffic)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(Array(midiInput.peFlowLog.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(size: 9, design: .monospaced))
+                                .lineLimit(3)
+                        }
+                    }
+                }
+                HStack {
+                    Button("Copy PE Log") {
+                        #if os(iOS)
+                        UIPasteboard.general.string = midiInput.peFlowLogText
+                        #endif
+                    }
+                    .font(.caption)
+                    Button("Clear") {
+                        midiInput.clearPEFlowLog()
+                    }
+                    .font(.caption)
+                }
             }
 
             Button {

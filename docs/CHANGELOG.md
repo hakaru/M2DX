@@ -12,12 +12,19 @@ M2DXプロジェクトの全変更履歴を記録します。
 - サスティンペダル (CC64) 対応
 - ピッチベンド対応 (±2半音)
 - UMPワード (umpWord1/umpWord2) の生データ保存と高精度デコード
+- ロギングシステム全面改修: os.Logger + BufferMIDI2Logger 二重出力アーキテクチャ
+- CompositeMIDI2Logger による統合ログ管理
+- MIDI-CI Property Exchange Responder 実装 (ResourceList, DeviceInfo, ChannelList, ProgramList, X-ProgramEdit, X-ParameterList, JSONSchema)
+- Program Change → PE Notify 連携 (ChannelList / X-ProgramEdit 自動通知)
+- MIDIデバッグログバッファ (BufferMIDI2Logger → UI表示)
 
 ### Changed
 - CoreMIDITransport: MIDI 1.0プロトコルからMIDI 2.0プロトコルに切り替え
 - MIDIEventQueue.data2: UInt8からUInt32に拡張 (高精度データ格納用)
 - MIDIInputManagerコールバックシグネチャ: velocity UInt16, CC/PB UInt32に変更
 - MIDI 1.0互換7ビットパスを廃止し、16/32ビットパイプラインに統一
+- 全 print() を os.Logger に置換 (subsystem: "com.example.M2DX")
+- CIManager / PEManager にロガーインスタンスを注入する設計に変更
 
 ## [2026-02-07] - ソフトクリッピング + AVAudioSourceNode移行 + リファクタリング + MIDI 2.0対応
 
