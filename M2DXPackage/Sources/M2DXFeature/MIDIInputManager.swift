@@ -282,7 +282,7 @@ public final class MIDIInputManager {
 
                 if peIsolationStep >= 2 && peIsolationStep < 25 {
                     // Step 2+: Add PEResponder + PEManager
-                    let responder = PEResponder(muid: sharedMUID, transport: midi)
+                    let responder = PEResponder(muid: sharedMUID, transport: midi, logger: logger)
                     self.peResponder = responder
                     Task { [weak self] in
                         await responder.setLogCallback { resource, body, replySize in
@@ -420,57 +420,27 @@ public final class MIDIInputManager {
                                 }
                             }
                             // Multi-dispatch: PEResponder, CIManager, PEManager
-                            //
-                            // MUID rewrite strategy:
-                            // KORG KeyStage caches MUIDs from previous sessions and sends
-                            // PE messages to the cached MUID instead of discovering us.
-                            // When we see a PE message (0x30-0x3F) for an unknown MUID,
-                            // auto-accept it and rewrite to our MUID so the PE flow works.
                             if let resp = self.peResponder {
-                                let ourMUID = await resp.muid
-                                var respData = data
-                                var shouldDispatch = true
-                                if subID2Val >= 0x30 && subID2Val <= 0x3F,
-                                   let parsed = CIMessageParser.parse(data),
-                                   parsed.destinationMUID != ourMUID,
-                                   parsed.destinationMUID != MUID.broadcast,
-                                   data.count >= 14 {
-                                    // Drop PE messages destined for other MUIDs (e.g. macOS MIDI-CI 0x1E204DF).
-                                    // Rewriting caused M2DX to respond to messages meant for the macOS entity,
-                                    // which made KeyStage receive duplicate responses and hang.
-                                    await MainActor.run {
-                                        self.appendDebugLog("PE: DROP dst=\(parsed.destinationMUID) (not ours \(ourMUID)) sub=\(subID2)")
-                                    }
-                                    shouldDispatch = false
-                                }
-                                // Drop Subscribe Reply (0x39) — these are KeyStage acknowledging our Notify.
-                                // No need to process them in PEResponder.
-                                if shouldDispatch && subID2Val == 0x39 {
-                                    peLogger.debug("PE: ignoring Subscribe Reply (0x39)")
-                                    shouldDispatch = false
-                                }
-                                if shouldDispatch {
-                                    await resp.handleMessage(respData)
-                                    // Log what PEResponder processed
-                                    if subID2Val == 0x34 {
-                                        if let inquiry = CIMessageParser.parseFullPEGetInquiry(respData) {
-                                            await MainActor.run {
-                                                self.appendDebugLog("PE-Resp: replied GET \(inquiry.resource ?? "?")")
-                                            }
-                                        }
-                                    }
-                                    if subID2Val == 0x36 {
-                                        // PE SET — log resource and body for debugging
-                                        let bodyStr = Self.decodePEPayload(respData)
+                                // PEResponder handles MUID filtering and 0x39 drop internally
+                                await resp.handleMessage(data)
+                                // Log what PEResponder processed
+                                if subID2Val == 0x34 {
+                                    if let inquiry = CIMessageParser.parseFullPEGetInquiry(data) {
                                         await MainActor.run {
-                                            self.appendDebugLog("PE-Resp: handled SET \(bodyStr)")
+                                            self.appendDebugLog("PE-Resp: replied GET \(inquiry.resource ?? "?")")
                                         }
                                     }
-                                    if subID2Val == 0x38 {
-                                        if let sub = CIMessageParser.parseFullPESubscribeInquiry(respData) {
-                                            await MainActor.run {
-                                                self.appendDebugLog("PE-Resp: handled Sub \(sub.resource ?? "?") cmd=\(sub.command ?? "start")")
-                                            }
+                                }
+                                if subID2Val == 0x36 {
+                                    let bodyStr = Self.decodePEPayload(data)
+                                    await MainActor.run {
+                                        self.appendDebugLog("PE-Resp: handled SET \(bodyStr)")
+                                    }
+                                }
+                                if subID2Val == 0x38 {
+                                    if let sub = CIMessageParser.parseFullPESubscribeInquiry(data) {
+                                        await MainActor.run {
+                                            self.appendDebugLog("PE-Resp: handled Sub \(sub.resource ?? "?") cmd=\(sub.command ?? "start")")
                                         }
                                     }
                                 }
