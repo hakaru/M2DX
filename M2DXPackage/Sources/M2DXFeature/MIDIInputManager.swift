@@ -21,6 +21,9 @@ private let ciLogger = Logger(subsystem: logSubsystem, category: "CI")
 /// Used alongside OSLogMIDI2Logger via CompositeMIDI2Logger so that
 /// CIManager/PEManager internal logs appear both in Console.app AND
 /// in the app's in-memory debug buffer.
+///
+/// Safety: @unchecked Sendable is safe because `onLog` is a `@Sendable` closure
+/// set once at init and never mutated. `minimumLevel` is a `let` constant.
 final class BufferMIDI2Logger: MIDI2Core.MIDI2Logger, @unchecked Sendable {
     let minimumLevel: MIDI2Core.MIDI2LogLevel = .debug
     private let onLog: @Sendable (String) -> Void
@@ -100,17 +103,15 @@ public final class MIDIInputManager {
     /// PE Capability handshake completion tracking
     private var peCapabilityReady: Set<MUID> = []
 
-    /// MUIDs we've accepted as "old cached versions of us" for MUID rewrite
-    /// When KORG sends Cap Inquiry to a cached MUID and we manually reply,
-    /// subsequent PE messages to that MUID are rewritten for PEResponder.
-    private var acceptedOldMUIDs: Set<MUID> = []
 
     /// Debounce task for PE Notify — cancel previous before scheduling new
     private var pendingNotifyTask: Task<Void, Never>?
 
+    #if DEBUG
     /// PE Sniffer Mode: disable PE Responder and log all CI SysEx in full hex
     /// Used to observe KORG Module ↔ KeyStage communication passively
     public var peSnifferMode: Bool = false
+    #endif
 
     /// Composite logger injected into CIManager/PEManager (OSLog + Buffer)
     private var compositeLogger: CompositeMIDI2Logger?
@@ -183,19 +184,16 @@ public final class MIDIInputManager {
         if debugLog.count > debugLogMax {
             debugLog.removeFirst()
         }
-        // PE/CI lines also go to peFlowLog for full history + os.Logger
-        if line.hasPrefix("PE") {
+        // PE/CI/SNIFF lines also go to peFlowLog for full history + os.Logger
+        let isPE = line.hasPrefix("PE")
+        let isCI = line.hasPrefix("CI")
+        let isSniff = line.hasPrefix("SNIFF")
+        if isPE || isCI || isSniff {
             peFlowLog.append(line)
             if peFlowLog.count > peFlowLogMax { peFlowLog.removeFirst() }
-            peLogger.info("\(line, privacy: .public)")
-        } else if line.hasPrefix("CI") {
-            peFlowLog.append(line)
-            if peFlowLog.count > peFlowLogMax { peFlowLog.removeFirst() }
-            ciLogger.info("\(line, privacy: .public)")
-        } else if line.hasPrefix("SNIFF") {
-            peFlowLog.append(line)
-            if peFlowLog.count > peFlowLogMax { peFlowLog.removeFirst() }
-            peLogger.notice("\(line, privacy: .public)")
+            if isPE { peLogger.info("\(line, privacy: .public)") }
+            else if isCI { ciLogger.info("\(line, privacy: .public)") }
+            else { peLogger.notice("\(line, privacy: .public)") }
         } else {
             midiLogger.debug("\(line, privacy: .public)")
         }
@@ -253,7 +251,12 @@ public final class MIDIInputManager {
             // Step 2: CIManager + Discovery Inquiry (no PEResponder/PEManager)
             // Step 3: Full PE/CI (original code)
             let peIsolationStep = 3  // Full PE/CI with Subscribe disabled in ResourceList
-            if peIsolationStep == 0 || peSnifferMode {
+            #if DEBUG
+            let snifferActive = peSnifferMode
+            #else
+            let snifferActive = false
+            #endif
+            if peIsolationStep == 0 || snifferActive {
                 appendDebugLog("SNIFF: Sniffer mode ON — PE Responder disabled")
             } else {
                 let sharedMUID = MUID(rawValue: 0x5404629)!
@@ -373,7 +376,14 @@ public final class MIDIInputManager {
                         let subID2 = data.count > 4 ? String(format: "0x%02X", data[4]) : "?"
                         let subID2Val = data.count > 4 ? data[4] : 0
 
-                        if self.peSnifferMode {
+                        #if DEBUG
+                        let snifferActive = self.peSnifferMode
+                        #else
+                        let snifferActive = false
+                        #endif
+
+                        if snifferActive {
+                            #if DEBUG
                             // ── Sniffer Mode: full hex + decoded sub-ID2 name ──
                             let fullHex = data.map { String(format: "%02X", $0) }.joined(separator: " ")
                             let subName = Self.ciSubID2Name(subID2Val)
@@ -396,6 +406,7 @@ public final class MIDIInputManager {
                                     peLogger.notice("SNIFF-PE: \(decoded, privacy: .public)")
                                 }
                             }
+                            #endif
                         } else {
                             // ── Normal Mode ──
                             await MainActor.run {
@@ -568,7 +579,6 @@ public final class MIDIInputManager {
         isPEQueryInProgress = false
         peStatusMessage = ""
         peCapabilityReady = []
-        acceptedOldMUIDs = []
 
         if let transport {
             Task {
@@ -791,6 +801,7 @@ public final class MIDIInputManager {
 
     // MARK: - Sniffer Helpers
 
+    #if DEBUG
     /// Human-readable name for CI sub-ID2 values
     private static func ciSubID2Name(_ val: UInt8) -> String {
         switch val {
@@ -821,6 +832,7 @@ public final class MIDIInputManager {
         let dst = d0 | (d1 << 7) | (d2 << 14) | (d3 << 21)
         return (String(format: "MUID(0x%07X)", src), String(format: "MUID(0x%07X)", dst))
     }
+    #endif
 
     /// Decode PE payload by finding JSON content directly (robust against CI version differences)
     private static func decodePEPayload(_ data: [UInt8]) -> String {

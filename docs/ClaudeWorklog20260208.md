@@ -1180,3 +1180,232 @@
 決定事項: iOS実機ビルド成功確認
 次のTODO: コード整理・コミット / TODO.md更新
 ---
+---
+2026-02-08 08:32
+作業項目: コードレビュー & ドキュメントライター起動
+追加機能の説明:
+- ユーザー依頼: 現在のM2DXコードベースに対してコードレビュー + ドキュメント作成
+- code-reviewer エージェントとdocument-writer エージェントを並列起動
+- 対象: M2DXPackage/Sources/M2DXFeature/ の変更ファイル群
+決定事項: コードレビューとドキュメント作成を並行で実施
+次のTODO: レビュー結果とドキュメントを確認・反映
+---
+
+---
+2026-02-08 08:33
+作業項目: M2DXプロジェクト全コードレビュー実施
+追加機能の説明:
+- M2DXPackage/Sources/M2DXFeature/ の主要6ファイルを詳細レビュー
+- 観点: コード品質、Swift Concurrency、エラーハンドリング、メモリ管理、MIDI/音声パフォーマンス、セキュリティ
+- PE Notify 0x38修正（CI v1.1準拠）後のコードベースを対象
+- レビュー結果を docs/code-review-20260208.md に出力
+決定事項: 包括的コードレビューを実施し、改善提案を提供
+次のTODO: レビュー結果確認 → 改善実施判断
+---
+---
+2026-02-08 08:33
+作業項目: M2DXプロジェクトドキュメント更新（TODO/CHANGELOG/PE実装ノート）
+追加機能の説明:
+- docs/TODO.md: 本日の成果（PE Notify 0x38修正・LCD表示成功）を反映、完了項目チェック
+- docs/CHANGELOG.md: 本日の変更（PE v1.1準拠・macOS entity除外・0x39フィルタ）をエントリ追加
+- docs/PE_Implementation_Notes.md: 0x3F→0x38修正の技術的詳細を追記
+決定事項: 既存内容は消さず追記・更新のみ実施
+次のTODO: ドキュメント更新後、コミット判断
+---
+---
+2026-02-08 08:37
+作業項目: M2DXドキュメント更新完了（TODO/CHANGELOG/PE実装ノート）
+追加機能の説明:
+- ★docs/TODO.md 更新完了:
+  - 次回最優先タスク2件を完了チェック（macOS版作成・PE/CI検証）
+  - 検証タスク3件を完了チェック（音色切替・LCD表示・PE Notify反映）
+  - 完了セクションに本日の4件追加（PE Notify 0x38・LCD表示・macOS entity除外・0x39フィルタ）
+- ★docs/CHANGELOG.md 更新完了:
+  - [Unreleased] セクションにmacOS entity除外・0x39フィルタを追加
+  - Fixed セクションに「KORG KeyStage LCD プログラム名表示問題を完全解決」を追加
+  - PE Notify 0x3F→0x38修正・currentValues形式修正・ハング解決・デバッグ環境確立を記載
+- ★docs/PE_Implementation_Notes.md 更新完了:
+  - セクション15追加: PE Notify sub-ID2修正（0x3F→0x38）の詳細ドキュメント
+  - 問題の経緯・症状・根本原因（CI v1.1/v1.2互換性）を詳述
+  - MIDI2Kit 3ファイルの修正内容をコードブロック付きで記載
+  - テスト結果（連続20+PC、ハングなし、LCD更新成功）を記録
+  - 教訓4項目: CI互換性・仕様オプション・macOS特有問題・0x39扱い
+  - セクション16更新: Phase 8追加
+  - セクション17更新: 現状を2026-02-08時点に更新
+決定事項: 全ドキュメントが本日の成果を正確に反映。既存内容は全て保持。
+次のTODO: コミット判断・iOS実機テスト
+---
+---
+2026-02-08 08:39
+作業項目: コードレビュー & ドキュメント更新 完了
+追加機能の説明:
+- ★コードレビュー完了 → docs/code-review-20260208.md 作成
+  - 致命的問題なし。Warning 3件、Suggestion 8件、Nitpick 4件
+  - Swift 6 Concurrency完全準拠、MIDI-CI PE v1.1実装、リアルタイム最適化が高評価
+  - 最優先改善: PE Notify debounce実装、Configuration Change再入ガード、macOS entity DROPログ強化
+- ★ドキュメント更新完了:
+  - docs/TODO.md — PE Notify修正・LCD表示成功を完了チェック
+  - docs/CHANGELOG.md — 2026-02-08の変更エントリ追加（0x3F→0x38修正、macOS entity除外等）
+  - docs/PE_Implementation_Notes.md — セクション15追加（sub-ID2修正の技術詳細）、セクション16/17更新
+決定事項: コードレビュー・ドキュメント更新完了。レビュー指摘の改善は次ステップ
+次のTODO: レビュー指摘（debounce実装、再入ガード）の対応 / コミット
+---
+
+---
+2026-02-08 08:45
+作業項目: MIDI2Logger プロトコル & NullMIDI2Logger 実装確認
+追加機能の説明:
+- MIDI2Kit codebase で MIDI2Logger protocol と NullMIDI2Logger の定義を特定
+- CIManager, PEManager の logger パラメータ宣言を確認
+- コード上の使用パターンをドキュメント化
+決定事項: MIDI2Logger protocol定義と NullMIDI2Logger実装を把握完了
+次のTODO: MIDI2Logger統合の検討
+---
+
+---
+2026-02-08 08:45
+作業項目: PE実装問題 → MIDI2Kit吸収計画の実装開始（4フェーズ）
+追加機能の説明:
+- Phase 1: PEResponder.swift に MIDI2Logger プロトコル注入（print()→logger.debug/info()統一、peRespLog削除）
+- Phase 2: handleMessage() に .peSubscribeReply (0x39) 明示ケース追加（default暗黙無視→明示DROP）
+- Phase 3: MUID mismatch ログを logger.debug() に統一
+- Phase 4: MIDIInputManager.swift の重複フィルタ（行429-451のMUID DROP + 0x39フィルタ）を削除、PEResponder初期化時にlogger渡し
+決定事項:
+- MIDI2Logger は MIDI2Core モジュールに定義済み → MIDI2PE から直接アクセス可能
+- PEManager パターン準拠: init(logger: any MIDI2Logger = NullMIDI2Logger())
+- excludeMUIDs/subscriberMUIDs/logCallback はアプリ側に残す（計画通り）
+次のTODO: Phase 1 から順に実装開始
+---
+
+---
+2026-02-08 08:57
+作業項目: PEリファクタリング コードレビュー完了
+追加機能の説明:
+- ★PEResponder.swift + MIDIInputManager.swift のリファクタリング詳細レビュー実施
+- レビュー対象:
+  1. PEResponder.swift 全体 — logger注入、print()→logger置換、0x39明示ケース追加
+  2. MIDIInputManager.swift 422-460行 — 重複MUID/0x39フィルタ削除、logger渡し
+- レビュー結果: **Critical 0件、Warning 0件、Suggestion 2件**
+  - 🔵 Suggestion 1: logger初期化パターン統一 (Optional+nil-coalescing → 非Optional+デフォルト引数)
+  - 🔵 Suggestion 2: 0x39ログレベル検討 (正常フローなのでログ削除 or #if DEBUG)
+- 正しく実装された点 6項目:
+  ✅ 挙動完全保持 (MUID/0x39フィルタが重複なく動作)
+  ✅ API一貫性 (PEManager パターンにほぼ準拠)
+  ✅ スレッド安全性 (Swift 6 Concurrency完全準拠)
+  ✅ print()完全削除、peRespLog完全削除
+  ✅ Breaking Change影響なし (デフォルト引数で後方互換)
+  ✅ RT Safety問題なし (Audio Thread とは無関係)
+- 良かった点 4項目:
+  🎯 単一責任原則の徹底 (MIDIInputManager→PEResponderへ責務移管)
+  🎯 ログ一元化 (category="PE-Resp")
+  🎯 明示的プロトコル処理 (0x39が暗黙→明示)
+  🎯 テスト容易性向上 (logger注入可能)
+- 総評: **教科書的品質のリファクタリング。このままコミット可能。**
+- レビューレポート保存: docs/code-review-20260208-pe-refactoring.md (324行)
+決定事項: Suggestion 2件は機能影響なし。このままコミット可能と判断
+次のTODO: (ユーザーの判断待ち) コミット or Suggestion対応 or iOS実機テスト
+---
+
+---
+2026-02-08 08:53
+作業項目: PEリファクタリング コードレビュー実施
+追加機能の説明:
+- PEResponder.swift + MIDIInputManager.swift の変更を詳細レビュー
+- Critical: 0件、Warning: 0件、Suggestion: 2件（機能影響なし）
+- Suggestion 1: logger初期化パターン統一（(any MIDI2Logger)? = nil → any MIDI2Logger = NullMIDI2Logger()）
+- Suggestion 2: 0x39ログレベル検討（本番ノイズ削減）
+- 正しく実装された点: 挙動完全保持、API設計一貫性、Actor安全性、print()完全置換、Breaking Changes無し、RT Safety問題なし
+決定事項: このままコミット可能。Suggestion 2件は任意対応。
+次のTODO: Suggestion対応判断 → コミット
+---
+
+---
+2026-02-08 09:01
+作業項目: Suggestion 1 対応 + コミット完了
+追加機能の説明:
+- Suggestion 1 適用: PEResponder init の logger パラメータを PEManager パターンに統一
+  - Before: `logger: (any MIDI2Logger)? = nil` + `?? NullMIDI2Logger()`
+  - After: `logger: any MIDI2Logger = NullMIDI2Logger()`
+- MIDI2Kit コミット: `50b2d4f` — Inject MIDI2Logger into PEResponder, add explicit 0x39 handling
+- M2DX コミット: `900bb13` — Remove duplicate PE filters, delegate MUID/0x39 handling to PEResponder
+- 両リポジトリビルド成功確認済み
+決定事項: 2リポジトリにそれぞれコミット完了。pushはユーザー判断。
+次のTODO: 実機テスト / 残りのドキュメント更新コミット判断
+---
+
+---
+2026-02-08 09:09
+作業項目: M2DXプロジェクト リファクタリング分析（編集なし）
+追加機能の説明:
+- 対象: M2DXFeature/ (SwiftUI/Actor/MV) + PEResponder.swift
+- 観点: 責務分離、デッドコード、重複、Concurrency、エラーハンドリング、RT Safety
+決定事項: 分析開始
+次のTODO: コードベース読み込み → 分析レポート作成
+---
+
+---
+2026-02-08 09:10
+作業項目: M2DXコードベース リファクタリング分析 完了
+追加機能の説明:
+- MIDIInputManager.swift (1146行)、M2DXAudioEngine.swift (525行)、FMSynthEngine.swift (785行)、M2DXFeature.swift (460行)、MIDIEventQueue.swift (82行)、PEResponder.swift (568行) を精査
+- 責務分離・デッドコード・重複・Concurrency・エラーハンドリング・RT Safetyの6観点で分析
+- レポート作成: docs/refactoring-20260208.md
+決定事項: 分析完了。改善提案を含むレポートを出力
+次のTODO: ユーザーがレポートを確認 → 優先度判断
+---
+
+---
+2026-02-08 09:09
+作業項目: M2DXプロジェクト リファクタリング分析
+追加機能の説明:
+- 6ファイル(MIDIInputManager 1146行, M2DXAudioEngine 525行, FMSynthEngine 785行等)を分析
+- 致命的問題: 0件
+- 重要な改善推奨: 1件（MIDIInputManager 責務分割 → 5ファイル化）
+- 中程度の改善: 3件（Sniffer削除、ログ重複、再入ガード）
+- 軽微な改善: 2件
+- RT Safety / Swift 6 Concurrency: 教科書的品質で問題なし
+- 詳細レポート: docs/refactoring-20260208.md
+決定事項: Phase 1（Sniffer削除・未使用プロパティ削除）から段階的に実施可能
+次のTODO: ユーザー判断 → Phase 1 実施 or MIDIInputManager分割計画
+---
+
+---
+2026-02-08 09:16
+作業項目: リファクタリング全3フェーズ実装開始
+追加機能の説明:
+- Phase 1: peSnifferMode を #if DEBUG 囲い、未使用プロパティ(debugConnectedCount, acceptedOldMUIDs)削除、@unchecked Sendableコメント追加
+- Phase 2: MIDIInputManager分割 — appendDebugLogのログ統一化、Configuration Change再入ガード強化
+- Phase 3: 軽微な改善
+決定事項: 全3フェーズ一括実施。MIDIInputManager分割は大規模すぎるため、まず責務ごとのextension分離から段階的に進める
+次のTODO: Phase 1 実装開始
+---
+
+---
+2026-02-08 09:19
+作業項目: リファクタリング Phase 1-3 実装再開（前セッション中断分）
+追加機能の説明:
+- Task #6 (in_progress): peSnifferMode #if DEBUG化の残り — snifferブロック(行383-405) + ciSubID2Name/parseCIHeader ラップ
+- Task #7: 未使用プロパティ削除 (debugConnectedCount, acceptedOldMUIDs)
+- Task #8: @unchecked Sendable コメント追加
+- Task #9: Configuration Change 再入ガード強化
+- Task #10: appendDebugLog ログ統一
+- Task #11: ビルド検証 + コミット
+決定事項: 前セッションの状態を確認、Task #6から再開
+次のTODO: sniffer受信ループブロックと sniffer-only ヘルパーを #if DEBUG で囲う
+---
+
+---
+2026-02-08 09:22
+作業項目: リファクタリング Phase 1-3 全タスク完了 + ビルド成功
+追加機能の説明:
+- Task #6: peSnifferMode #if DEBUG化 — プロパティ、start()、受信ループ、ciSubID2Name/parseCIHeader全てラップ
+- Task #7: acceptedOldMUIDs 削除（初期化+リセットのみで読み取りなし）。debugConnectedCountはUI使用のため残置
+- Task #8: BufferMIDI2Logger @unchecked Sendable 安全性コメント追加
+- Task #9: handleConfigurationChange の isRestarting → restartTask パターンに変更（cancel+replace、100msデバウンス）
+- Task #10: appendDebugLog のPE/CI/SNIFF分岐を統一（peFlowLog.append重複解消）
+- Task #11: iOS実機ビルド BUILD SUCCEEDED（warningのみ、errorなし）
+決定事項:
+- Swift #if/#else/#endifはif/else分岐内に置けないため、snifferActiveローカル変数パターンで対応
+- debugConnectedCountはSettingsView.swiftで使用中のため削除対象外
+次のTODO: コミット
+---
