@@ -602,6 +602,13 @@ public final class MIDIInputManager {
                                 self.appendDebugLog("CI: Lost \(muid)")
                                 self.discoveredPEDevices.removeAll { $0.muid == muid }
                                 self.updatePEReplyDestinations()
+                                // Clean up subscriptions for lost device
+                                if let responder = self.peResponder {
+                                    let activeMUIDs = Set(self.discoveredPEDevices.map(\.muid))
+                                    Task {
+                                        await responder.removeSubscriptions(notIn: activeMUIDs)
+                                    }
+                                }
                             case .deviceUpdated(let device):
                                 self.appendDebugLog("CI: Updated \(device.displayName)")
                             default:
@@ -962,8 +969,8 @@ public final class MIDIInputManager {
         // Send PE Notify to subscribers — KeyStage REQUIRES Notify after PC or it hangs.
         // excludeMUIDs: exclude macOS entities (not in discoveredPEDevices), keep KeyStage.
         Task {
-            // Wait 500ms to ensure KeyStage has processed the PC message
-            try? await Task.sleep(for: .milliseconds(500))
+            // Brief wait to ensure KeyStage has processed the PC message
+            try? await Task.sleep(for: .milliseconds(50))
 
             // Exclude non-KORG MUIDs (e.g. macOS built-in MIDI-CI entity)
             let excludeMUIDs = await responder.subscriberMUIDs().subtracting(knownMUIDs)
@@ -978,9 +985,6 @@ public final class MIDIInputManager {
     }
 
     // MARK: - PE Notify (CC value changes)
-
-    /// Send X-ProgramEdit Notify when CC values change (debounced)
-    private var ccNotifyTask: Task<Void, Never>?
 
     private func notifyCCChange() {
         // Disabled: PE Notify for CC changes causes KeyStage hang

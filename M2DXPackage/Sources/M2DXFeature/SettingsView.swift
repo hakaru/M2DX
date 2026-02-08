@@ -305,6 +305,7 @@ struct SettingsView: View {
                     }
                 }
             }
+            #if DEBUG
             // Sniffer mode toggle
             Toggle(isOn: Binding(
                 get: { midiInput.peSnifferMode },
@@ -322,14 +323,19 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            #endif
         } header: {
             Text("MIDI-CI Property Exchange")
         } footer: {
+            #if DEBUG
             if midiInput.peSnifferMode {
                 Text("Sniffer mode ON — PE Responder disabled. Use Console.app (subsystem: com.example.M2DX) to view logs.")
             } else {
                 Text("Discover and query MIDI-CI PE devices for program lists.")
             }
+            #else
+            Text("Discover and query MIDI-CI PE devices for program lists.")
+            #endif
         }
     }
 

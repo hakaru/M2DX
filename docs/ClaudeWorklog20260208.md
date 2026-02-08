@@ -2137,3 +2137,247 @@
 次のTODO: コミット実行
 ---
 
+---
+2026-02-08 16:58
+作業項目: BUG調査 — Reconnect後にPC/CCが送れない問題
+追加機能の説明:
+- 症状: Note/ペダル/ピッチベンドは動作、PC/CCは反応なし
+- USB再接続すると PCは送信される
+- Reconnect（stop→start）するとPC/CCが送れなくなる
+- 受信パスの違い（UMP/MIDI1.0）やCIフィルタリングの可能性を調査
+決定事項: 調査中
+次のTODO: 原因特定 → 修正
+
+調査結果:
+- CoreMIDITransport: MT=2(MIDI1.0) → umpWord1=0,0 → handleReceivedData(MIDI1.0パス)
+- CoreMIDITransport: MT=4(MIDI2.0) → umpWord1=word,word2 → handleUMPData(UMPパス)
+- 両パスともPC/CC処理は実装されている
+- NoteがOKでPC/CCがNGは不可解 → 受信パスのどこかで違いがある
+- 仮説: PC/CCだけCI SysEx条件に引っかかっている可能性を検証必要
+---
+
+
+---
+2026-02-08 17:19
+作業項目: KeyStageハング調査の続き — PE Notify全無効化ビルドのテスト
+追加機能の説明:
+- 前回セッション末尾: PE Notify 3箇所全て無効化 + ccFromMIDIフィードバック防止追加後のMac版ビルド完了
+- 無効化済みの3機能: notifyCCChange(), auto ProgramList query, notifyProgramChange PE Notify
+- これからMac版を起動してKeystageハングが解消されたか確認
+決定事項: PE Notify全無効化状態でテスト
+次のTODO: M2DXMac起動 → ハング確認 → 原因の切り分け（1つずつ再有効化）
+---
+
+---
+2026-02-08 17:28
+作業項目: KeyStageハング原因再調査 — 過去ドキュメント読み直し
+追加機能の説明:
+- PE_Implementation_Notes.md 全体を読み直し
+- 過去のハング原因3つ確認:
+  1. Phase 7: X-ProgramEdit currentValues形式不在
+  2. Phase 8: PE Notify 0x3F → 0x38修正
+  3. Phase 9: broadcast → targeted送信（iOS USB）
+- 今回の症状「PC一回だけ送れてLCDハング」はPhase 9と同じパターン
+- Mac版でもPE GET/Subscribe応答がbroadcast（全ポート送信）になっている可能性
+- resolvePEDestinations()がCTRLポートを見つけていなければbroadcastモードにフォールバック
+- notifyProgramChange内のexcludeMUIDs: knownMUIDsはdiscoveredPEDevicesのMUID → KeyStage自身を除外 → Notifyが誰にも届かない（ただしこれはハング原因ではない）
+決定事項: PE Logの初期化行でbroadcast/targeted確認が必要
+次のTODO: ユーザーにPE Log確認依頼 → broadcast確認 → targeted修正
+---
+
+---
+2026-02-08 17:35
+作業項目: KeyStageハング原因特定・修正 — CI Invalidate broadcast → targeted
+追加機能の説明:
+- 根本原因: CI Invalidate MUID がbroadcastで全ポート(CTRL + DAW OUT)に送信されていた
+- Mac版でもMIDI dests=[CTRL, DAW OUT]で2ポート見えている
+- PEResponderはCTRLのみtargetedだが、以下2箇所がbroadcast:
+  1. foreign MUID検出時のInvalidate (L474 midi.broadcast)
+  2. stop()時のci.invalidateMUID() (CIManager内部でtransport.destinations全送信)
+- Phase 9 (iOS USB targeted送信修正)と同じパターン
+- 修正:
+  1. peReplyDestinationsインスタンス変数追加（CTRLポートID保持）
+  2. foreign MUID Invalidate → peReplyDestinations使用のtargeted送信
+  3. stop()時Invalidate → peReplyDestinations使用のtargeted送信
+決定事項: CI/PE関連の全送信をCTRLポートのみにtarget
+次のTODO: テスト（PC連続送信でハングしないか確認）
+---
+
+---
+2026-02-08 17:52
+作業項目: KeyStageハング根本原因特定 — PE Notify excludeMUIDs逆転バグ
+追加機能の説明:
+- 根本原因: notifyProgramChangeのexcludeMUIDsが逆転していた
+  - コミット版(動作確認済み): subscriberMUIDs().subtracting(knownMUIDs) → macOSエンティティのみ除外
+  - 壊れたコード: excludeMUIDs: knownMUIDs → KeyStage自身を除外（Notifyが届かない）
+- KeyStageはSubscribe後に自動PCを送信し、PE Notify応答を期待する
+- Notifyが来ないとKeyStage LCDがハング（待機状態でフリーズ）
+- bankPC削除テストでもハング → bankPCは無関係
+- Invalidate targeted修正も無関係（別問題として残す）
+- 修正: コミット版のNotifyロジックに完全復元
+  1. excludeMUIDs: subscriberMUIDs().subtracting(knownMUIDs) に修正
+  2. ChannelList + X-ProgramEdit 両方のNotify復元
+  3. 500ms遅延復元
+  4. bankPC復元
+決定事項: PE Notify送信はKeystageの必須要件（送らないとハング）
+次のTODO: テスト（KeyStageハングが解消されるか確認）
+---
+
+---
+2026-02-08 17:59
+作業項目: PC名前オフバイワンバグ修正
+追加機能の説明:
+- M2DXFeature.swift onProgramChangeコールバックで、KeyStageからの1-basedプログラム値をそのまま0-basedインデックスとして使用していたバグを修正
+- presets[Int(program)] → presets[max(0, Int(program) - 1)] に変更
+- notifyProgramChange側では既に -1 変換済みだが、onProgramChange側は未対応だった
+決定事項: KeyStageのPC値は1-based（bankPC同様）、配列アクセスには-1変換が必要
+次のTODO: ビルド確認
+---
+
+---
+2026-02-08 18:03
+作業項目: Reconnect時のcurrentProgramIndex問題分析
+追加機能の説明:
+- ユーザー質問: M2DXがBRASS 1の時にKeystage reconnectしたらどうなるか？
+- 問題点: start()内で `currentProgramIndex = 0` にリセットされる（244行目）
+- Reconnect = stop() → start() の流れ
+- start()でcurrentProgramIndex=0にリセット → ChannelList GET応答が "1:E.PIANO 1" に戻る
+- 実際のAudioEngine側のプリセットはBRASS 1のまま → 表示とサウンドが不一致
+- PE GET ChannelList/X-ProgramEdit は ComputedResource で currentProgramIndex を参照
+- Reconnect後、KeyStageが PE GET ChannelList → "1:E.PIANO 1" と表示（不正）
+決定事項: Reconnect時にcurrentProgramIndexをリセットしてはいけない（or AudioEngine側のプリセットも合わせる必要あり）
+次のTODO: start()のcurrentProgramIndex=0リセットを削除 or selectedPresetと同期する仕組み
+---
+
+---
+2026-02-08 18:07
+作業項目: KeyStage電源再起動時LCD "i My"ハング — 3つのバグ特定
+追加機能の説明:
+- バグ1: replyDestinations重複 — `3154177,3154177,3154177` 同一IDが3回
+  - updatePEReplyDestinations()がdiscoveredPEDevicesの各デバイスのdestinationを取得
+  - KeyStage再起動時にdeviceDiscovered→deviceUpdatedが複数回fire
+  - しかしdiscoveredPEDevicesは重複チェック付き（isNew）
+  - 問題はCIManager側: discoveredPEDevicesに3デバイス（全て同じdestination）が入っている可能性
+  - または: 複数のdiscoveredPEDevicesが同じCoreMIDI destinationを解決している
+  - → PE reply が毎回3回送信されてKeyStageが混乱
+- バグ2: X-ProgramEdit Subscribe storm — sub-20〜sub-38（19回）
+  - PEResponderが同一MUIDからのsubscribe startを無限に受け入れる
+  - 重複チェックなし、上限なし
+  - KeyStageが3回replyを受け取る→エラーで再試行→雪だるま式に増加
+- バグ3: Stale subscriptions — sub-1〜sub-16が旧MUIDのまま残存
+  - KeyStage電源再起動でMUID変更（旧→0xDD654E6）
+  - 旧subscriptionsが未クリーンアップ
+  - PEResponderのnextSubscriptionIdが17から開始
+  - KeyStage再起動時にPEResponder.subscriptionsをフラッシュする仕組みがない
+決定事項: 3つの修正が必要（重複dest、subscribe重複制限、stale subscription cleanup）
+次のTODO: 3つのバグを修正
+---
+
+---
+2026-02-08 18:07
+作業項目: ドキュメント照合 + 3バグ修正完了 + 追加検証
+追加機能の説明:
+- PE_Implementation_Notes.md全文を精読し、修正内容の整合性を確認
+- ドキュメント照合結果:
+  1. Section 18 (iOS USB targeted送信): replyDestinationsは起動時にresolvePEDestinations()で1つだけ解決
+     → updatePEReplyDestinations()が後からdiscoveredPEDevicesベースで上書きし、重複destが発生
+     → 修正: Set<UInt32>で重複排除 ✅
+  2. Section 4 (MUID管理): KeyStage電源再起動でMUID変更、旧キャッシュ問題
+     → PEResponder側のsubscriptionsも旧MUIDのまま残存
+     → 修正: removeSubscriptions(notIn:) + deviceDiscovered時クリーンアップ ✅
+  3. Section 15 (PE Notify): 0x38 Subscribe方式のNotify
+     → 3重replyがsubscribe stormの根本原因
+     → 修正: 重複subscribe時は既存subscribeIdをREUSE ✅
+- 3つの修正ファイル:
+  1. MIDIInputManager.swift: updatePEReplyDestinations()重複排除 + deviceDiscoveredでstale cleanup
+  2. PEResponder.swift: handleSubscribeStart()重複MUID+リソースReuseロジック + removeSubscriptions(notIn:) API
+決定事項: ドキュメントとの整合性確認済み、修正は正しい方針
+次のTODO: ビルド + テスト（KeyStage電源再起動でハングしないか確認）
+---
+
+---
+2026-02-08 18:12
+作業項目: M2DXMac ビルド成功 + 起動
+追加機能の説明:
+- macOS Debug ビルド成功（BUILD SUCCEEDED）
+- M2DXMac再起動完了
+- テスト準備完了: KeyStage電源再起動でハングしないか確認
+決定事項: ビルドエラーなし
+次のTODO: KeyStage電源再起動テスト
+---
+
+---
+2026-02-08 18:18
+作業項目: KeyStage Reconnectテスト — 全3バグ修正確認OK
+追加機能の説明:
+- テスト結果: 全項目成功
+  1. ✅ replyDestinations=3154177 — 1つだけ（重複なし）修正OK
+  2. ✅ Subscribe sub-1〜sub-4の4つだけ — storm無し、修正OK
+  3. ✅ sub-1から開始 — stale subscription無し、修正OK
+  4. ✅ ハングなし — PEフロー完走、LCD正常表示
+  5. ✅ PC名前正しい — program=0→1:INIT VOICE, program=1→2:E.PIANO 1, ... program=9→10:CLAV 1
+  6. ✅ CC値受信OK — Volume(CC#7)、Expression(CC#11) ノブ操作反映
+- PEフロー: ResourceList→DeviceInfo→ChannelList→Sub→ProgramList→Sub→X-ParameterList→Sub→X-ProgramEdit→Sub 全完走
+- PC 10回連続 + 折返し + CC操作 全て正常
+決定事項: Phase 12（replyDest重複排除 + Subscribe重複REUSE + stale cleanup）修正完了
+次のTODO: コミット
+---
+---
+2026-02-08 18:20
+作業項目: コードレビュー実施（M2DX + MIDI2Kit最新修正）
+追加機能の説明:
+- レビュー対象:
+  1. M2DXFeature.swift
+  2. MIDIInputManager.swift
+  3. SettingsView.swift
+  4. PEResponder.swift
+- 観点: バグ/ロジック、Swift Concurrency安全性、エラーハンドリング、保守性、MIDI-CI/PE仕様整合性
+決定事項: レビュー開始
+次のTODO: 各ファイル読み込み→詳細分析
+---
+---
+2026-02-08 18:20
+作業項目: リファクタリング提案（MIDIInputManager + M2DXFeature + PEResponder）
+追加機能の説明:
+- 目標: 大規模ファイルの分割・デバッグコード削除・無効化機能の整理・重複コード削減
+- 観点:
+  1. ファイルサイズ・関心の分離（MIDIInputManagerが大きすぎないか）
+  2. 不要デバッグログ（UMP-DBG, M1-DBG, CC-state）のクリーンアップ
+  3. 無効化機能（notifyCCChange, Auto ProgramList query）整理
+  4. 重複コード・定数抽出
+  5. Swift Concurrency パターン改善
+  6. #if os(macOS) / #if os(iOS) 整理
+決定事項: リファクタリング提案のみ（変更は行わない）
+次のTODO: 3ファイル読込→分析→提案リスト作成
+---
+---
+2026-02-08 18:20
+作業項目: コードレビュー完了
+追加機能の説明:
+- 4ファイルを詳細レビュー完了
+- 観点: バグ/ロジック、Swift Concurrency安全性、エラーハンドリング、保守性、PE仕様整合性
+- 発見事項: 軽微な指摘のみ、Critical/Warningなし
+決定事項: レビューレポート作成
+次のTODO: レポートをdocs/code-review-20260208-final.mdに保存
+---
+---
+2026-02-08 18:24
+作業項目: 3並列分析の結果まとめ報告
+追加機能の説明:
+- コードレビュー: 0 Critical, 0 Warning, 5 Suggestion, 2 Nitpick（総合⭐⭐⭐⭐⭐）
+- リファクタリング: 8カテゴリ提案、MIDIInputManager 1369行→約600行に削減可能
+- 性能: 500ms Task.sleep がPC遅延の主因、50msへ削減推奨
+決定事項: 結果をユーザーに報告
+次のTODO: ユーザーの判断を待つ（優先度: 500ms→50ms sleep削減、#if DEBUG修正、deviceLost cleanup追加）
+---
+---
+2026-02-09 02:41
+作業項目: 4つの改善実装完了（コード変更済み、未ビルド）
+追加機能の説明:
+- 修正1: 500ms→50ms sleep削減（MIDIInputManager.swift:969）PC体感速度改善
+- 修正2: #if DEBUG をSettingsViewのpeSnifferMode Toggle/footerに適用（Releaseビルド破壊防止）
+- 修正3: deviceLost でもstale subscription cleanup追加（MIDIInputManager.swift:605-611）
+- 修正4: 未使用 ccNotifyTask 変数削除
+決定事項: 4修正すべて適用完了
+次のTODO: 実機ビルド＆テスト → コミット
+---
