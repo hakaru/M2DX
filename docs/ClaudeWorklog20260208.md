@@ -2030,3 +2030,110 @@
 決定事項: 実装完了・動作確認済み
 次のTODO: コミット
 ---
+
+---
+2026-02-08 16:11
+作業項目: CCコントローラー情報の現在の実装状況を調査
+追加機能の説明:
+- KeyStageから送られてくるCC（Control Change）情報の現在の処理状況を確認
+- CC受信・表示・処理の実装を調査
+決定事項: 調査中
+次のTODO: 調査結果を報告
+---
+
+---
+2026-02-08 16:12
+作業項目: CC（Control Change）メッセージ処理の徹底調査
+追加機能の説明:
+- M2DXプロジェクト内のCC受信・処理・表示実装を全体把握
+- UMP/MIDI1.0両方のCC受信処理を確認
+- PE経由のCC/コントローラー情報（X-ParameterList、X-ProgramEdit）を確認
+- KeyStage Notification メカニズムを確認
+決定事項: CC処理の現状を完全に可視化完了
+次のTODO: 調査結果をユーザーに報告
+
+---
+
+---
+2026-02-08 16:16
+作業項目: CC#7 Volume をFMSynthEngineに実装
+追加機能の説明:
+- doControlChange内にCC#7処理を追加
+- 32bit CC値→0.0-1.0 Floatに変換してmasterVolume更新
+- レンダースレッド内で直接更新（RT安全、ロック不要）
+決定事項: doControlChange内にcase 7追加
+次のTODO: 実装 → ビルド
+---
+
+---
+2026-02-08 16:25
+作業項目: Mac版メイン画面下部にVolume/Expressionスライダー追加
+追加機能の説明:
+- M2DXRootView (M2DXFeature.swift) のキーボードセクション上にグローバルコントロール追加
+- Volume (CC#7) スライダー: 0-127, デフォルト100
+- Expression (CC#11) スライダー: 0-127, デフォルト127
+- スライダー操作→audioEngine.controlChange()でCC送信
+- MIDI CC受信時→スライダー値も同期（双方向）
+決定事項: keyboardSectionの上にglobalControlSectionを追加
+次のTODO: 実装
+---
+
+---
+2026-02-08 16:35
+作業項目: KeyStage PE X-ProgramEdit のCC値を実値に反映
+追加機能の説明:
+- 問題: X-ProgramEdit GETとNotifyのcurrentValuesが固定値（Vol=100, Exp=127等）
+- MIDIInputManagerにCC状態保持プロパティ追加（ccValues辞書）
+- CC受信時にccValuesを更新
+- X-ProgramEdit GET/Notify時にccValuesから実値を返す
+- CC変更時にX-ProgramEdit Notifyを送信してKeyStage LCD更新
+決定事項: ccValues辞書で状態管理、GET/Notify両方で実値反映
+次のTODO: 実装 → ビルド → 実機確認
+---
+
+---
+2026-02-08 16:42
+作業項目: CC対応方針の整理 / Brightness (CC#74) の機能検討
+追加機能の説明:
+- Mod (CC#1): スライダー不要、ホイールで送る → UIスライダー追加なし
+- Sustain (CC#64): スライダー不要、ペダルで送る → UIスライダー追加なし
+- Brightness (CC#74): EQとして使うか検討中
+決定事項: ユーザーと方針協議中
+次のTODO: Brightness機能の方向性を決定
+---
+
+---
+2026-02-08 16:46
+作業項目: PE定義からMod/Sustain削除、Brightness放置
+追加機能の説明:
+- Mod (CC#1) / Sustain (CC#64): PE X-ParameterList・X-ProgramEdit currentValuesから削除
+- Brightness (CC#74): 将来FXループ時に使用予定、今は放置（PE定義に残す）
+- ccValues辞書からCC#1, CC#64を削除
+- 残り: Volume (CC#7), Expression (CC#11), Brightness (CC#74)
+決定事項: Mod/SustainをPE送信対象外に、Brightnessは現状維持
+次のTODO: 実装
+---
+
+---
+2026-02-08 16:50
+作業項目: CC Volume/Expression + PE連携 動作確認OK
+追加機能の説明:
+- CC#7 Volume, CC#11 Expression: FMSynthEngine処理実装済み
+- Mac版UIスライダー: Vol/Expスライダー + Reconnectボタン
+- PE X-ProgramEdit: 実CC値をGET/Notifyで送信
+- UIスライダー操作 → KeyStage LCD反映OK
+- PE定義: Mod/Sustain削除、Volume/Expression/Brightnessの3つ
+決定事項: CC Volume/Expression実装完了、KeyStage連携動作確認済み
+次のTODO: コミット
+---
+---
+2026-02-08 16:50
+作業項目: レビュー・監査レポート全コミット
+追加機能の説明:
+- untracked docsレポート5件をコミット（.backupは除外）
+- code-review-20260207-2.md, code-review-20260208.md, code-review-20260208-pe-refactoring.md
+- performance-audit-20260207.md, refactoring-20260208.md
+決定事項: 全レポートをコミット
+次のTODO: コミット実行
+---
+
