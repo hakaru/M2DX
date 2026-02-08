@@ -22,6 +22,8 @@ public struct M2DXRootView: View {
     @State private var masterTuning: Double = 0
     @State private var volumeCC: Double = 100
     @State private var expressionCC: Double = 127
+    /// Guard to prevent feedback loop: MIDI CC → @State → onChange → updateCC
+    @State private var ccFromMIDI = false
     @State private var feedbackValues: [Float] = Array(repeating: 0, count: 6)
 
     @State private var operatorEnvelopes: [EnvelopeParameters] = (0..<6).map { _ in
@@ -73,19 +75,22 @@ public struct M2DXRootView: View {
             midiInput.onControlChange = { controller, value32 in
                 audioEngine.controlChange(controller, value32: value32)
                 let normalized = Double(value32) / Double(UInt32.max) * 127.0
+                ccFromMIDI = true
                 switch controller {
                 case 7: volumeCC = normalized
                 case 11: expressionCC = normalized
                 default: break
                 }
+                ccFromMIDI = false
             }
             midiInput.onPitchBend = { value32 in
                 audioEngine.pitchBend(value32)
             }
             midiInput.onProgramChange = { program in
                 let presets = DX7FactoryPresets.all
-                guard Int(program) < presets.count else { return }
-                let preset = presets[Int(program)]
+                let index = max(0, Int(program) - 1)
+                guard index < presets.count else { return }
+                let preset = presets[index]
                 applyPreset(preset)
                 selectedPreset = preset
             }
@@ -357,11 +362,13 @@ public struct M2DXRootView: View {
         }
         .background(Color.m2dxSecondaryBackground)
         .onChange(of: volumeCC) { _, newValue in
+            guard !ccFromMIDI else { return }
             let v32 = UInt32(newValue / 127.0 * Double(UInt32.max))
             audioEngine.controlChange(7, value32: v32)
             midiInput.updateCC(7, value: Int(newValue))
         }
         .onChange(of: expressionCC) { _, newValue in
+            guard !ccFromMIDI else { return }
             let v32 = UInt32(newValue / 127.0 * Double(UInt32.max))
             audioEngine.controlChange(11, value32: v32)
             midiInput.updateCC(11, value: Int(newValue))

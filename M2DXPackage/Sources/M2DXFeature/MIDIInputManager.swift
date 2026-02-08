@@ -107,6 +107,9 @@ public final class MIDIInputManager {
     /// CC value state for PE X-ProgramEdit currentValues (7-bit, 0-127)
     private var ccValues: [UInt8: Int] = [7: 100, 11: 127, 74: 64]
 
+    /// Resolved PE reply destinations (CTRL port only) — used for ALL CI/PE sends
+    private var peReplyDestinations: [MIDIDestinationID] = []
+
     #if os(macOS)
     /// Foreign MIDI-CI MUIDs detected from messages not addressed to us.
     /// On macOS, CoreMIDI creates a built-in MIDI-CI entity that competes
@@ -275,6 +278,7 @@ public final class MIDIInputManager {
                 // to all USB ports which causes KeyStage LCD hang.
                 // KORG USB: "CTRL" port only. Bluetooth: "Module" port.
                 let (peReplyDests, destNames) = Self.resolvePEDestinations()
+                self.peReplyDestinations = peReplyDests
                 appendDebugLog("PE: MIDI dests=[\(destNames.joined(separator: ", "))]")
 
                 let ci = CIManager(
@@ -470,8 +474,16 @@ public final class MIDIInputManager {
                                         sourceMUID: dest,
                                         targetMUID: dest
                                     )
+                                    // Targeted send (CTRL only) — broadcast to DAW OUT causes KeyStage LCD hang
                                     if let midi = self.transport {
-                                        try? await midi.broadcast(invalidateMsg)
+                                        let dests = await MainActor.run { self.peReplyDestinations }
+                                        if dests.isEmpty {
+                                            try? await midi.broadcast(invalidateMsg)
+                                        } else {
+                                            for dest in dests {
+                                                try? await midi.send(invalidateMsg, to: dest)
+                                            }
+                                        }
                                     }
                                     await MainActor.run {
                                         self.appendDebugLog("CI: Invalidate MUID sent for \(dest)")
@@ -578,11 +590,11 @@ public final class MIDIInputManager {
                                         self.discoveredPEDevices.append(device)
                                     }
                                     self.updatePEReplyDestinations()
-                                    // Auto-query ProgramList on new PE device discovery
-                                    if isNew {
-                                        Task { [weak self] in
-                                            try? await Task.sleep(for: .milliseconds(500))
-                                            await self?.queryRemoteProgramList(device: device)
+                                    // Clean up stale subscriptions from old MUIDs (e.g. KeyStage power restart)
+                                    if let responder = self.peResponder {
+                                        let activeMUIDs = Set(self.discoveredPEDevices.map(\.muid))
+                                        Task {
+                                            await responder.removeSubscriptions(notIn: activeMUIDs)
                                         }
                                     }
                                 }
@@ -624,9 +636,21 @@ public final class MIDIInputManager {
         ciEventTask = nil
 
         // Send Invalidate MUID before cleanup so KORG removes cached MUID
+        // Targeted to CTRL only — broadcast to DAW OUT causes KeyStage LCD hang
         if let ci = ciManager, let transport {
+            let dests = peReplyDestinations
             Task {
-                await ci.invalidateMUID()
+                if dests.isEmpty {
+                    await ci.invalidateMUID()
+                } else {
+                    let msg = CIMessageBuilder.invalidateMUID(
+                        sourceMUID: ci.muid,
+                        targetMUID: MUID.broadcast
+                    )
+                    for dest in dests {
+                        try? await transport.send(msg, to: dest)
+                    }
+                }
             }
         }
 
@@ -893,10 +917,13 @@ public final class MIDIInputManager {
         guard let responder = peResponder, let ci = ciManager else { return }
         let devices = discoveredPEDevices
         Task {
+            var seen = Set<UInt32>()
             var destinations: [MIDIDestinationID] = []
             for device in devices {
                 if let dest = await ci.destination(for: device.muid) {
-                    destinations.append(dest)
+                    if seen.insert(dest.value).inserted {
+                        destinations.append(dest)
+                    }
                 }
             }
             await responder.setReplyDestinations(destinations)
@@ -932,6 +959,8 @@ public final class MIDIInputManager {
 
         appendDebugLog("PE-Notify: program=\(idx) name=\(name)")
 
+        // Send PE Notify to subscribers — KeyStage REQUIRES Notify after PC or it hangs.
+        // excludeMUIDs: exclude macOS entities (not in discoveredPEDevices), keep KeyStage.
         Task {
             // Wait 500ms to ensure KeyStage has processed the PC message
             try? await Task.sleep(for: .milliseconds(500))
@@ -954,17 +983,9 @@ public final class MIDIInputManager {
     private var ccNotifyTask: Task<Void, Never>?
 
     private func notifyCCChange() {
-        ccNotifyTask?.cancel()
-        ccNotifyTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(50))
-            guard !Task.isCancelled, let self else { return }
-            guard let responder = self.peResponder else { return }
-
-            let body = Data(self.xProgramEditJSON.utf8)
-            let knownMUIDs = Set(self.discoveredPEDevices.map(\.muid))
-            let excludeMUIDs = await responder.subscriberMUIDs().subtracting(knownMUIDs)
-            await responder.notify(resource: "X-ProgramEdit", data: body, excludeMUIDs: excludeMUIDs)
-        }
+        // Disabled: PE Notify for CC changes causes KeyStage hang
+        // TODO: Fix PE Notify format/timing before re-enabling
+        appendDebugLog("CC-state: \(ccValues)")
     }
 
     // MARK: - Sniffer Helpers
@@ -1158,9 +1179,15 @@ public final class MIDIInputManager {
     /// Handle MIDI 2.0 UMP words with full precision
     /// Already on MainActor (class is @MainActor)
     private func handleUMPData(_ word1: UInt32, word2: UInt32, fallbackData: [UInt8]) {
+        let mt = UInt8((word1 >> 28) & 0x0F)
         let status = UInt8((word1 >> 20) & 0x0F)
         let channel = UInt8((word1 >> 16) & 0x0F)
         let byte3 = UInt8((word1 >> 8) & 0xFF)   // note or controller
+
+        // Log non-Note messages for debugging
+        if status != 0x9 && status != 0x8 {
+            appendDebugLog(String(format: "UMP-DBG mt=%d st=0x%X ch=%d b3=%d w2=0x%08X", mt, status, channel, byte3, word2))
+        }
 
         // Channel filter: 0 = Omni (accept all), 1-16 = specific
         let passesFilter = receiveChannel == 0 || Int(channel) + 1 == receiveChannel
@@ -1225,6 +1252,11 @@ public final class MIDIInputManager {
     /// Handle raw MIDI bytes received from CoreMIDITransport (MIDI 1.0 fallback)
     /// Already on MainActor (class is @MainActor, called via await self.handleReceivedData)
     private func handleReceivedData(_ data: [UInt8]) {
+        // Log MIDI 1.0 path entry for debugging
+        if let first = data.first, (first >> 4) == 0xB || (first >> 4) == 0xC {
+            let hex = data.prefix(4).map { String(format: "%02X", $0) }.joined(separator: " ")
+            appendDebugLog("M1-DBG: \(hex)")
+        }
         // Process MIDI 1.0 byte stream (most common from CoreMIDI PacketList)
         var offset = 0
         while offset < data.count {

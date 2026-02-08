@@ -5,6 +5,8 @@ import SwiftUI
 import AVFoundation
 #if os(iOS)
 import CoreAudioKit
+#elseif os(macOS)
+import AppKit
 #endif
 
 // MARK: - Settings View
@@ -414,6 +416,9 @@ struct SettingsView: View {
                         let text = midiInput.debugLogReversed.joined(separator: "\n")
                         #if os(iOS)
                         UIPasteboard.general.string = text
+                        #elseif os(macOS)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
                         #endif
                     }
                     .font(.caption)
@@ -443,6 +448,9 @@ struct SettingsView: View {
                     Button("Copy PE Log") {
                         #if os(iOS)
                         UIPasteboard.general.string = midiInput.peFlowLogText
+                        #elseif os(macOS)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(midiInput.peFlowLogText, forType: .string)
                         #endif
                     }
                     .font(.caption)
