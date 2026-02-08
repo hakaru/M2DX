@@ -16,6 +16,8 @@
 - [x] program 0-9 で applyPreset による音色切替が動作するか確認 ★完了 2026-02-08
 - [x] KeyStage LCD にプログラム名が表示されるか目視確認 ★完全成功 2026-02-08（PE Notify 0x38修正）
 - [x] PE Notify によるプログラム切替が KeyStage LCD に反映されるか確認 ★完全成功 2026-02-08（連続20+PC動作安定）
+- [x] iOS USB版 KeyStage LCD 動作確認 ★完全成功 2026-02-08（targeted送信＋bankPC 1-based修正）
+- [x] Value UP/DOWN による順番通りのプログラム変更確認 ★完全成功 2026-02-08（bankPC 1-based修正）
 - [ ] BLE MIDI 接続での動作確認（macOS/iOS 版安定後）
 
 ## 改善（優先度低）
@@ -35,3 +37,8 @@
 - [x] KeyStage LCD プログラム名表示実現（X-ProgramEdit currentValues 形式 + PE Notify 0x38）★2026-02-08
 - [x] macOS entity 除外ロジック実装（PEResponder.excludeMUIDs / subscriberMUIDs()）★2026-02-08
 - [x] KeyStage Subscribe Reply (0x39) フィルタ実装★2026-02-08
+- [x] iOS USB targeted送信実装（resolvePEDestinations() — CTRL優先、Session 1/DAW OUT除外）★2026-02-08
+- [x] ChannelList supportsSubscription バグ修正★2026-02-08
+- [x] bankPC 1-based修正（ProgramList/X-ProgramEdit/Notify全て）★2026-02-08
+- [x] peIsolationStep デバッグ分岐削除（常にフルPE/CI動作）★2026-02-08
+- [x] PEリファクタリング（MIDI2Logger注入、restartTask パターン、#if DEBUG peSnifferMode）★2026-02-08

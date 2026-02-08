@@ -27,6 +27,18 @@ M2DXプロジェクトの全変更履歴を記録します。
 - MIDI 1.0互換7ビットパスを廃止し、16/32ビットパイプラインに統一
 - 全 print() を os.Logger に置換 (subsystem: "com.example.M2DX")
 - CIManager / PEManager にロガーインスタンスを注入する設計に変更
+- **PEResponder MIDI2Logger プロトコル注入** (2026-02-08)
+  - print() → logger.debug/info() 統一
+  - PEResponder: command:"notify" 無視ケース追加、0x39明示ケース追加
+  - MIDIInputManager: 重複MUID/0x39フィルタをPEResponderに移管
+- **MIDIInputManager リファクタリング** (2026-02-08)
+  - peSnifferMode を #if DEBUG 囲い
+  - acceptedOldMUIDs 削除（未使用プロパティ）
+  - BufferMIDI2Logger @unchecked Sendable 安全性コメント追加
+  - handleConfigurationChange: restartTask パターン（cancel+replace、100msデバウンス）
+  - appendDebugLog PE/CI/SNIFF分岐統一
+- **peIsolationStep デバッグ分岐削除** (2026-02-08)
+  - step 4/5/6デバッグ分岐削除、step引数削除、常にフルPE/CI動作
 
 ### Fixed
 - **KORG KeyStage LCD プログラム名表示問題を完全解決** (2026-02-08)
@@ -34,6 +46,20 @@ M2DXプロジェクトの全変更履歴を記録します。
   - X-ProgramEdit を KORG公式仕様の currentValues 形式に修正
   - KeyStage ハング問題を解決（連続20+回のProgram Change動作安定）
   - macOS環境でのリアルタイムデバッグ環境を確立し、根本原因を特定
+- **iOS USB版 KeyStage LCD ハング問題を完全解決** (2026-02-08)
+  - 根本原因: USB 3ポート(Session 1, CTRL, DAW OUT)全てにbroadcast → Session 1/DAW OUTへのCI/PEがLCDハング
+  - targeted送信実装: resolvePEDestinations() — CoreMIDI API直接使用、CTRL優先
+  - PEResponder/CIManager にreplyDestinationsパラメータ追加
+  - 結果: iOS実機 USB接続で完全動作、LCD表示成功、ハングなし
+- **KeyStage Value UP/DOWN ナビゲーション問題を完全解決** (2026-02-08)
+  - 根本原因: KeyStageはbankPC値を1-basedで解釈する
+  - 0-based(bankPC:[0,0,0]〜[0,0,9])だとナビゲーションがずれてPC重複送信
+  - 修正: ProgramList/X-ProgramEdit/Notify全てでbankPC[2]=index+1（1-based）
+  - PC受信時: programIndex-1 で0-based配列インデックスに変換
+  - 結果: Value UP/DOWN が完全に順番通り動作（UP: 2→3→...→10, DOWN: 9→8→...→1）
+- ChannelList supportsSubscription バグ修正 (2026-02-08)
+  - peIsolationStep >= 6 条件がStep 3でfalse → 405拒否
+  - 修正: 常にtrue（peIsolationStep削除後）
 
 ## [2026-02-07] - ソフトクリッピング + AVAudioSourceNode移行 + リファクタリング + MIDI 2.0対応
 

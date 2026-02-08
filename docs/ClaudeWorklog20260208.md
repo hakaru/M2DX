@@ -1772,3 +1772,227 @@
 決定事項: デバッグステップは役割を果たしたため削除。本番コードはフルPE/CIのみ
 次のTODO: コード編集 → 実機ビルド確認 → コミット
 ---
+
+---
+2026-02-08 13:03
+作業項目: ProgramList/X-ProgramEdit/ChannelListに番号プレフィックス追加
+追加機能の説明:
+- Module(KORG)は "1:Piano" のように番号付きで送信している
+- M2DXも同様に "1:E.PIANO 1" 形式でプログラム名を送信するよう変更
+- currentProgramName に番号プレフィックスを追加（全PE箇所に反映）
+- ProgramList の title にも番号プレフィックス追加
+決定事項: 1始まりの番号 + コロン + スペースなし形式（"1:E.PIANO 1"）
+次のTODO: コード修正 → ビルド確認
+---
+
+---
+2026-02-08 13:17
+作業項目: スニッファーモードでKORG Module ProのProgramListキャプチャ準備
+追加機能の説明:
+- decodePEPayloadのbody切り捨て制限を300→2000文字に拡大
+- ProgramList GETレスポンス (0x35) のbody全文をキャプチャ可能にする
+- スニッファーモードはUI設定から有効化（PE Responderは無効になる）
+決定事項: Module Pro起動 → KeyStage USB接続 → M2DXスニッファーでPE通信傍受
+次のTODO: body制限拡大 → ビルド → インストール → スニッファーモードでキャプチャ
+---
+
+---
+2026-02-08 13:46
+作業項目: PC受信時の性能問題調査・修正
+追加機能の説明:
+- PC受信→Notify送信パスの性能ボトルネック特定:
+  1. appendDebugLog内のprint()が毎行実行（RTパスで重い）
+  2. notifyProgramChange内で大量のMainActor.runコンテキストスイッチ
+  3. Notify送信前にexcludeMUIDs計算でawait多重
+  4. peFlowLogへのhasPrefix判定が全ログ行で実行
+- 修正方針: print()削除、MainActor.run統合、不要ログ削減
+決定事項: RT性能改善が最優先
+次のTODO: print()削除、Notifyパス最適化
+---
+
+---
+2026-02-08 14:10
+作業項目: macOS版でProgramList問題の検証
+追加機能の説明:
+- iOS版PE Flow Log確認: ProgramList 456B正常送信、全10プリセットのJSONが含まれている
+- KeyStage LCD: 起動時INIT VOIC → UP=E.PIANO → UP=変化なし（2エントリ目で停止）
+- M2DXPackage はiOS/macOS共通コード — macOS版(M2DXMac)で同じロジック検証可能
+- macOS版の方がデバッグ容易（Console.app、USB安定性）
+決定事項: macOS版で ProgramList の Value UP/DOWN 動作を検証
+次のTODO: M2DXMac ビルド → KeyStage USB接続 → ProgramList動作確認
+---
+
+---
+2026-02-08 14:30
+作業項目: DAW OUT除外調査 + KeyStage Value UP/DOWN問題の継続調査
+追加機能の説明:
+- DAW OUTは既に除外済みと判明（targeted 1 dest = CTRLのみ）
+- Value UP/DOWNでProgramList 2エントリ目で停止する問題の根本原因を調査中
+- ProgramList GETリクエストヘッダーにoffset/limit等のページネーションパラメータが含まれている可能性を調査
+決定事項: DAW OUTは原因ではない。ProgramList JSONフォーマットまたはGETリクエスト解析を重点調査
+次のTODO: ProgramList GETリクエストヘッダーの中身を確認、offset/limitパラメータの処理を追加
+---
+
+---
+2026-02-08 14:35
+作業項目: macOS版でProgramList Value UP/DOWNテスト
+追加機能の説明:
+- ProgramList offset/limitページネーション対応ビルド済み
+- macOS版（M2DXMac）を起動してKeyStage USB接続でテスト
+- Console.appでPE-Respのリクエストヘッダー（offset/limit）を確認
+決定事項: macOS版でValue UP/DOWN動作確認
+次のTODO: M2DXMac起動 → KeyStage接続 → PEフロー完走 → Value UP/DOWN確認
+---
+
+---
+2026-02-08 14:41
+作業項目: KeyStage LCD非表示問題のログ分析
+追加機能の説明:
+- M2DX側: PE Notifyは正常に送信（sending 153B + 490B → targeted send OK）
+- KeyStage LCD側: プログラム名が表示されない
+- Value UP/DOWNはPCメッセージとして正常動作（program 1-6まで全てナビゲート可能）
+- PEResponder内のSubscription存在は確認（notify()がメッセージ送信している）
+- しかしPE-Resp Subscribe OKログが見つからない
+- macOS組み込みMIDI-CIエンティティの干渉可能性
+決定事項: KeyStageがM2DXのNotifyを無視している原因を特定する必要あり
+次のTODO: USB再接続してPEセットアップを最初から観察、Subscribe成立を確認
+---
+
+---
+2026-02-08 15:01
+作業項目: macOS MIDI-CIエンティティ干渉問題 — Invalidate MUID実装
+追加機能の説明:
+- macOS組み込みMIDI-CIエンティティ(MUID 0x1E204DF)がKeyStageと競合しハングの原因
+- M2DXのPEセットアップ後、macOSエンティティがDiscovery/PE Capabilityを送信し干渉
+- MIDI2KitのCIMessageBuilder.invalidateMUID()を使用して対策を実装
+- M2DXのPEセットアップ完了後にmacOSエンティティのMUIDをInvalidateする
+決定事項: CoreMIDIの組み込みエンティティを排除するためInvalidate MUIDメッセージを送信
+次のTODO: CIManager/MIDIInputManagerにInvalidate MUID送信ロジックを実装、macOSビルド・テスト
+---
+
+---
+2026-02-08 15:24
+作業項目: Value UP/DOWN順序問題の分析
+追加機能の説明:
+- PEセットアップ完走確認（全リソースGET + Subscribe sub-1〜sub-4成功）
+- ProgramList GET: offset:0, limit:128 → totalCount:10, 全10プリセット返却OK
+- しかしValue UP/DOWNでPC値が順番に進まない: program=1→9→1→1→2→3
+- M2DX側のUMP PCパースは正しい（(word2 >> 24) & 0x7F）
+- KeyStage側が送信するPC値自体が順番でない
+- PE Notify送信OK、X-ProgramEdit GETも各PC後に正常に返却
+決定事項: KeyStageのValue UP/DOWN動作はPCメッセージで制御。PC値が不規則な原因を調査中
+次のTODO: KeyStageのProgramListナビゲーションロジック解析、bankPC形式の問題有無確認
+---
+
+---
+2026-02-08 15:27
+作業項目: Value UP/DOWN順序問題の修正 — ProgramListレスポンスヘッダー調査
+追加機能の説明:
+- 前セッション最終状態の確認:
+  - PC値が不規則: 1→9→1→1→2→3（順番に0→1→2→3と進むべき）
+  - ProgramList GET正常: offset:0, limit:128 → totalCount:10, 全10プリセット返却OK
+  - UMP PCパースは正しい: (word2 >> 24) & 0x7F
+- 仮説: ProgramListレスポンスヘッダーの"offset":0がKeyStageのナビゲーションを混乱させている
+- 修正方針: responseHeaderから"offset"フィールドを削除し、{"status":200,"totalCount":10}のみ返す
+決定事項: offsetフィールド削除でテスト
+次のTODO: ProgramList responseHeader修正 → macOSビルド → テスト
+---
+
+---
+2026-02-08 15:42
+作業項目: Value UP/DOWN問題の根本原因特定 — KeyStageが毎回program=1を送信
+追加機能の説明:
+- ProgramList responseHeaderからoffset削除後のmacOSテスト結果:
+  - PEフロー完走（5リソースGET + Sub-1〜sub-4）✓
+  - ハングなし ✓
+  - しかしValue UP/DOWN全てで program=1 のみ（値が変わらない）
+- ログパターン: PC=1 → Notify → 0x39×2 → GET ChannelList → GET X-ProgramEdit → 次もPC=1
+- X-ProgramEdit応答: bankPC:[0,0,1], name:"2:E.PIANO 1"
+- ★仮説: KeyStageはbankPCを1-basedで解釈している
+  - bankPC:[0,0,1] → ProgramListの1番目 → UP=2番目=bankPC[2]=2 → PC=2を期待
+  - しかし毎回bankPC:[0,0,1]をNotifyで返すので「1番目に戻った」→また+1=PC=1
+  - 現在ProgramList: bankPC[2]=0,1,2,...,9（0-based）
+  - 修正案: bankPC[2]=1,2,3,...,10（1-based）に変更
+決定事項: ProgramList/X-ProgramEdit/Notify全てのbankPC値を1-basedに統一してテスト
+次のTODO: bankPC値を1-basedに変更 → macOSビルド → テスト
+---
+
+---
+2026-02-08 15:49
+作業項目: ★★★ Value UP/DOWN順序問題 完全解決 — bankPC 1-based修正
+追加機能の説明:
+- ★bankPC 1-based修正で Value UP/DOWN が完全に順番通りに動作:
+  - UP: program=2→3→4→5→6→7→8→9→10 (順番通り！)
+  - DOWN: program=9→8→7→6→5→4 (順番通り！)
+  - ハングなし ✓
+- 根本原因: KeyStageはbankPC値を1-basedで解釈する
+  - 0-based(bankPC:[0,0,0]〜[0,0,9])だと、KeyStageの内部ナビゲーションがずれて同じPC値を繰り返し送信
+  - 1-based(bankPC:[0,0,1]〜[0,0,10])で正しくナビゲート
+- 修正箇所（3箇所）:
+  1. ProgramList GET: bankPC[2]=globalIndex+1 (0-based→1-based)
+  2. X-ProgramEdit GET: bankPC[2]=idx+1 (0-based→1-based)
+  3. notifyProgramChange X-ProgramEdit Notify: bankPC[2]=idx+1 (0-based→1-based)
+- PC受信マッピング修正: notifyProgramChange()で programIndex-1 して0-based配列インデックスに変換
+  - KeyStageは1-based bankPC値をそのままPC番号として送信するため
+- ProgramList responseHeaderのoffsetフィールドも削除済み（不要）
+決定事項: bankPC 1-based + PC受信-1変換 で Value UP/DOWN完全動作
+次のTODO: iOS実機ビルド → コミット
+---
+
+---
+2026-02-08 15:51
+作業項目: MIDIInputManager.swift コードレビュー — bankPC 1-based変更
+追加機能の説明: 前セッションのbankPC 0→1-based変更、PC受信→配列インデックス変換、エッジケース確認
+決定事項: レビュー開始
+次のTODO: MIDIInputManager.swift読み込み → 整合性確認 → レビューレポート作成
+---
+---
+2026-02-08 15:51
+作業項目: ドキュメント更新（午後の成果反映）起動
+追加機能の説明:
+- 午前のドキュメント更新は08:37に完了済み（PE Notify 0x38修正まで）
+- 午後の追加成果をドキュメントに反映:
+  1. iOS USB targeted送信修正（CTRLポートのみ、Session 1/DAW OUT除外）
+  2. ChannelList supportsSubscription バグ修正
+  3. bankPC 1-based修正（Value UP/DOWN完全動作）
+  4. PEリファクタリング（MIDI2Logger注入、peIsolationStep削除）
+  5. resolvePEDestinations() 実装（CoreMIDI API直接使用）
+- 対象: TODO.md, CHANGELOG.md, PE_Implementation_Notes.md
+決定事項: 午後の全成果をドキュメントに反映
+次のTODO: ドキュメント更新完了後、コミット準備
+---
+
+---
+2026-02-08 15:52
+作業項目: 午後の成果をドキュメントに反映
+追加機能の説明:
+- TODO.md, CHANGELOG.md, PE_Implementation_Notes.md を読み込み
+- 午後の成果（targeted送信、bankPC 1-based、リファクタリング）を追記
+- iOS USB版 KeyStage LCD完全成功の成果を反映
+決定事項: ドキュメント3ファイルを更新
+次のTODO: 既存ドキュメント読み込み → 追記 → 検証
+---
+
+---
+2026-02-08 15:54
+作業項目: MIDIInputManager.swift bankPC 1-based変更 コードレビュー完了
+追加機能の説明:
+- 対象: notifyProgramChange, ProgramList GET, X-ProgramEdit GET/Notify, currentProgramName
+- 整合性確認: 3箇所のbankPC値全て+1で1-based統一 ✅
+- 逆変換確認: PC受信時に-1して0-based配列インデックスに変換 ✅
+- エッジケース: programIndex=0 → max(0,-1)=0で安全、範囲外→フォールバックあり ✅
+- 問題: Critical 0件, Warning 0件
+- Suggestion 2件: programIndex=0処理の明示化、フォールバック表記の1-based統一
+決定事項: 現在の実装で問題なし。iOS実機ビルド → コミット可能
+次のTODO: iOS実機ビルド → コミット
+---
+---
+2026-02-08 15:52
+作業項目: 午後の成果をドキュメントに反映（完了）
+追加機能の説明:
+- TODO.md 更新: iOS USB版動作確認、Value UP/DOWN完了チェック、午後の全修正項目追加
+- CHANGELOG.md 更新: iOS USB targeted送信修正、bankPC 1-based修正、ChannelList supportsSubscription修正、PEリファクタリング詳細追加
+- PE_Implementation_Notes.md 更新: 第18章（iOS USB targeted送信）、第19章（bankPC 1-based修正）、第20-21章（解決済み問題時系列・現状）追加
+決定事項: 午後の成果（09:01〜15:49）を全てドキュメントに反映完了
+次のTODO: iOS実機ビルド → コミット準備
+---

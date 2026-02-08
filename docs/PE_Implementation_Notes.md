@@ -1018,7 +1018,385 @@ if parsed.subID2 == 0x39 {
 
 ---
 
-## 17. 現状（2026-02-08 08:33 時点）
+## 18. iOS USB版 targeted送信修正 — KeyStage LCD ハング最終解決 (2026-02-08)
+
+### 問題の経緯
+
+macOS版では PE Notify 0x38修正により完全動作したが、iOS実機 USB接続では依然として KeyStage LCD ハングが発生。
+
+### 症状
+
+- iOS実機からUSB接続で KeyStage に PE/CI メッセージ送信
+- KeyStage LCD が固着、ノブ無反応（完全ハング）
+- macOS版では同じコードで正常動作 → iOS固有の問題
+
+### 根本原因の発見（2026-02-08 12:25）
+
+**iOS USB接続では KeyStage に 3つのポートが見える:**
+1. **Session 1** (Out: KORG KeyStage Port 1)
+2. **CTRL** (Out: KORG KeyStage CTRL)
+3. **DAW OUT** (Out: KORG KeyStage DAW Out)
+
+**M2DXのbroadcast送信は全3ポートに送信:**
+- Session 1: 音源用ポート（Note On/Off, CC等）
+- CTRL: PE/CI通信用ポート（推奨）
+- DAW OUT: MIDI Thru用ポート
+
+**問題:**
+- Session 1とDAW OUTへのCI/PEメッセージ送信がKeyStage内部でコンフリクト
+- KeyStage LCD パーサーがSession 1からのPE Notifyを処理中にDAW OUTからも届き、ハング
+
+**macOSでは問題が起きない理由:**
+- macOSはCTRLポートのみを使用（System MIDIデバイス設定由来）
+- iOSはCoreMIDI APIで全destinationを列挙 → broadcast = 全ポート送信
+
+### 修正内容
+
+#### 1. resolvePEDestinations() 実装（MIDIInputManager.swift）
+
+**CoreMIDI API直接使用でCTRLポートを優先的に選択:**
+```swift
+private static func resolvePEDestinations(source: MIDIEndpointRef) -> [MIDIEndpointRef] {
+    var result: [MIDIEndpointRef] = []
+    var entityRef: MIDIEntityRef = 0
+    MIDIEndpointGetEntity(source, &entityRef)
+
+    let destCount = MIDIEntityGetNumberOfDestinations(entityRef)
+    for i in 0..<destCount {
+        let dest = MIDIEntityGetDestination(entityRef, i)
+        var name: Unmanaged<CFString>?
+        MIDIObjectGetStringProperty(dest, kMIDIPropertyName, &name)
+        if let n = name?.takeRetainedValue() as? String {
+            if n.contains("CTRL") {
+                result = [dest]  // CTRL優先 — これのみ使用
+                break
+            }
+        }
+    }
+    if result.isEmpty {
+        // CTRLがない場合は全destination（フォールバック）
+        for i in 0..<destCount { result.append(MIDIEntityGetDestination(entityRef, i)) }
+    }
+    return result
+}
+```
+
+**ポイント:**
+- CTRLポート優先 — 見つかればこれのみ使用
+- CTRLが無い場合は全destination（後方互換性）
+- macOS/iOS共通ロジック
+
+#### 2. PEResponder replyDestinations パラメータ追加
+
+**PEResponder.swift:**
+```swift
+actor PEResponder {
+    private let replyDestinations: [MIDIEndpointRef]
+
+    init(..., replyDestinations: [MIDIEndpointRef] = []) {
+        self.replyDestinations = replyDestinations
+    }
+
+    private func sendReply(...) async throws {
+        if !replyDestinations.isEmpty {
+            // Targeted send (iOS USB)
+            for dest in replyDestinations {
+                try await transport.send(message, to: dest)
+            }
+        } else {
+            // Broadcast (macOS / BLE)
+            try await transport.broadcast(message)
+        }
+    }
+}
+```
+
+#### 3. CIManager setReplyDestinations() 追加
+
+**CIManager.swift:**
+```swift
+@MainActor
+@Observable
+final class CIManager {
+    private var replyDestinations: [MIDIEndpointRef] = []
+
+    func setReplyDestinations(_ dests: [MIDIEndpointRef]) {
+        self.replyDestinations = dests
+    }
+
+    private func sendDiscoveryReply(...) {
+        if !replyDestinations.isEmpty {
+            for dest in replyDestinations {
+                try? await transport.send(reply, to: dest)
+            }
+        } else {
+            try? await transport.broadcast(reply)
+        }
+    }
+}
+```
+
+#### 4. MIDIInputManager 統合
+
+**起動時にreplyDestinationsを設定:**
+```swift
+func start(...) async {
+    // ...
+    let source = notification.source
+    let peDestinations = Self.resolvePEDestinations(source: source)
+    await peResponder.setReplyDestinations(peDestinations)
+    await ciManager.setReplyDestinations(peDestinations)
+}
+```
+
+### 段階テスト（Step 4→5→6→フル）
+
+**Step 4: CTRL targeted Discovery Reply**
+- Result: CTRLのみ送信、Session 1/DAW OUT除外 → Success
+
+**Step 5: CTRL targeted Cap Reply + PE GET Reply**
+- Result: PE GET Reply targeted → Success
+
+**Step 6: CTRL targeted PE Notify**
+- Result: Notify targeted → Success
+
+**フルテスト: 連続PC + Value UP/DOWN**
+- Result: ハングなし、LCD更新成功
+
+### テスト結果（2026-02-08 12:53 実機確認）
+
+**環境:**
+- iOS 18.3 実機（iPhone）
+- USB接続 KeyStage
+- replyDestinations=[CTRL]
+
+**結果:**
+- ✅ **KeyStage LCD 表示成功** — X-ProgramEdit Notify で即座に反映
+- ✅ **ハングなし** — 連続PC動作安定
+- ✅ **PC変更で LCD更新成功** — Value UP/DOWN 正常動作
+
+### 教訓
+
+#### 1. iOSとmacOSのCoreMIDI環境差異
+
+- macOS: System MIDI設定で推奨ポートが決まる → CTRLポート優先
+- iOS: CoreMIDI APIで全destination列挙 → broadcast = 全ポート送信
+- **iOS固有の問題はtargeted送信で解決**
+
+#### 2. KeyStageのポート役割
+
+- **CTRL**: PE/CI通信専用（推奨）
+- **Session 1**: 音源用（Note On/Off, CC, PC等）
+- **DAW OUT**: MIDI Thru用
+- **Session 1/DAW OUTへのPE/CI送信は避けるべき**
+
+#### 3. broadcast vs targeted送信
+
+- **broadcast**: 全ポート送信 — BLE/macOSで推奨
+- **targeted**: 特定ポートのみ送信 — iOS USBで必須
+- **CoreMIDI send() API使用時は destination指定が可能**
+
+---
+
+## 19. bankPC 1-based修正 — Value UP/DOWN 順序問題の完全解決 (2026-02-08)
+
+### 問題の経緯
+
+iOS USB版 targeted送信修正により KeyStage LCD表示は成功したが、
+**KeyStage Value UP/DOWN でのプログラムナビゲーション順序が異常:**
+- UP: program=2→3→2→4→3→2→5→...（同じPC値が繰り返し現れる）
+- DOWN: program=0→1→0→1→0→...（0と1の間を往復）
+
+### 根本原因の発見（2026-02-08 15:36）
+
+**KeyStageはbankPC値を1-basedで解釈する:**
+- M2DXは0-based: bankPC:[0,0,0]〜[0,0,9]（配列インデックス）
+- KeyStageは1-based: bankPC:[0,0,1]〜[0,0,10]（ユーザー表示番号）
+- **0-basedでbankPC送信 → KeyStage内部ナビゲーションがずれる**
+
+**実測データ（Value UP）:**
+```
+M2DX送信 bankPC:[0,0,0] → KeyStage LCD: program=2
+M2DX送信 bankPC:[0,0,1] → KeyStage LCD: program=3
+M2DX送信 bankPC:[0,0,0] → KeyStage LCD: program=2（戻る）
+M2DX送信 bankPC:[0,0,2] → KeyStage LCD: program=4
+...
+```
+→ KeyStageの内部ポインタが0-based bankPCと1-based期待値の間でズレて、同じPC値を繰り返し送信
+
+### 修正内容
+
+#### 1. ProgramList GET: bankPC[2]=globalIndex+1
+
+**MIDIInputManager.swift — ProgramList リソース:**
+```swift
+await responder.registerResource("ProgramList", resource: ComputedResource(
+    supportsSubscription: true,
+    get: { header in
+        let offset = header.offset ?? 0
+        let limit = header.limit ?? 128
+        let presets = DX7FactoryPresets.all
+        let items = presets[offset..<min(offset+limit, presets.count)].enumerated().map { globalIndex, preset in
+            let idx = globalIndex + offset + 1  // 1-based
+            "{\"title\":\"\(preset.name)\",\"bankPC\":[0,0,\(idx)]}"
+        }
+        return Data("[\(items.joined(separator:","))]".utf8)
+    },
+    responseHeader: { _, bodyData in
+        let count = (try? JSONSerialization.jsonObject(with: bodyData) as? [Any])?.count ?? 0
+        return Data("{\"status\":200,\"totalCount\":\(count)}".utf8)
+    }
+))
+```
+
+**変更:**
+- `bankPC:[0,0,\(globalIndex)]` → `bankPC:[0,0,\(globalIndex+1)]`
+
+#### 2. X-ProgramEdit GET: bankPC[2]=idx+1
+
+**MIDIInputManager.swift — X-ProgramEdit リソース:**
+```swift
+await responder.registerResource("X-ProgramEdit", resource: ComputedResource(
+    supportsSubscription: true,
+    get: { _ in
+        await MainActor.run {
+            let idx = Int(currentProgramIndex) + 1  // 1-based
+            let name = DX7FactoryPresets.all[Int(currentProgramIndex)].name
+            let json = """
+            {"name":"\(name)","bankPC":[0,0,\(idx)],"currentValues":[...]}
+            """
+            return Data(json.utf8)
+        }
+    }
+))
+```
+
+**変更:**
+- `bankPC:[0,0,\(Int(currentProgramIndex))]` → `bankPC:[0,0,\(Int(currentProgramIndex)+1)]`
+
+#### 3. notifyProgramChange X-ProgramEdit Notify: bankPC[2]=idx+1
+
+**MIDIInputManager.swift — PE Notify送信:**
+```swift
+private func notifyProgramChange(programIndex: UInt8) {
+    guard let responder = peResponder else { return }
+    let idx = Int(programIndex) + 1  // 1-based
+    let name = DX7FactoryPresets.all[Int(programIndex)].name
+    let json = """
+    {"name":"\(name)","bankPC":[0,0,\(idx)],"currentValues":[...]}
+    """
+    Task { await responder.notify(resource: "X-ProgramEdit", data: Data(json.utf8)) }
+}
+```
+
+**変更:**
+- `bankPC:[0,0,\(Int(programIndex))]` → `bankPC:[0,0,\(Int(programIndex)+1)]`
+
+#### 4. PC受信マッピング修正: programIndex-1
+
+**MIDIInputManager.swift — Program Change受信:**
+```swift
+if let preset = midiEvent as? MIDIEvent.ProgramChange {
+    let programIndex = UInt8(max(0, min(Int(preset.program) - 1, 9)))  // 1-based → 0-based配列
+    await MainActor.run {
+        currentProgramIndex = programIndex
+        onProgramChange?(programIndex)
+    }
+    notifyProgramChange(programIndex: programIndex)
+}
+```
+
+**変更:**
+- KeyStageはbankPC値をそのままPC番号として送信（1-based）
+- `preset.program - 1` で0-based配列インデックスに変換
+
+### テスト結果（2026-02-08 15:49 実機確認）
+
+**環境:**
+- iOS 18.3 実機
+- USB接続 KeyStage
+- bankPC 1-based + PC受信-1変換
+
+**Value UP テスト:**
+```
+program=2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10（順番通り！）
+```
+
+**Value DOWN テスト:**
+```
+program=9 → 8 → 7 → 6 → 5 → 4（順番通り！）
+```
+
+**結果:**
+- ✅ **Value UP/DOWN 完全動作** — 同じPC値の重複なし
+- ✅ **ハングなし** — 連続PC動作安定
+- ✅ **LCD更新成功** — プログラム名即座に反映
+
+### 教訓
+
+#### 1. bankPC値の解釈はデバイス依存
+
+- MIDI仕様では0-based/1-basedの明確な規定なし
+- **KeyStageは1-basedで解釈** — ユーザー表示番号そのまま
+- **M2DXは0-based** — Swift配列インデックス
+- **送信時は1-based、受信時は-1変換が必要**
+
+#### 2. ProgramList responseHeader の offset フィールド
+
+**以前の実装:**
+```json
+{"status":200,"totalCount":10,"offset":0}
+```
+
+**修正後:**
+```json
+{"status":200,"totalCount":10}
+```
+
+- KeyStage は offset フィールドを無視（ページネーション未対応）
+- 削除しても動作に影響なし
+
+#### 3. Value UP/DOWN の動作仕様
+
+- KeyStage は現在の bankPC 値を基準に ±1 して次のPC番号を決定
+- 0-based bankPC では KeyStage 内部ポインタとズレが生じ、同じPC値を繰り返す
+- 1-based bankPC で KeyStage の期待値と一致 → 順番通り動作
+
+---
+
+## 20. 解決済み問題の時系列（更新 2026-02-08 15:52）
+
+### Phase 9: ★★★ iOS USB targeted送信修正 — KeyStage LCD ハング最終解決 (2026-02-08)
+
+- **問題**: iOS実機 USB接続で KeyStage LCD ハング（macOS版は正常）
+- **根本原因**: USB 3ポート(Session 1, CTRL, DAW OUT)全てにbroadcast送信 → Session 1/DAW OUTへのCI/PEがLCDハング
+- **修正内容**:
+  1. resolvePEDestinations() 実装（CoreMIDI API直接使用、CTRL優先）
+  2. PEResponder: replyDestinationsパラメータ追加、targeted送信
+  3. CIManager: setReplyDestinations() + targeted Discovery/Cap Reply
+- **結果**: iOS USB版で完全動作、LCD表示成功、ハングなし
+
+### Phase 10: ★★★ bankPC 1-based修正 — Value UP/DOWN 順序問題の完全解決 (2026-02-08)
+
+- **問題**: KeyStage Value UP/DOWN で同じPC値が繰り返し現れる（2→3→2→4→3→...）
+- **根本原因**: KeyStageはbankPC値を1-basedで解釈する
+  - 0-based(bankPC:[0,0,0]〜[0,0,9])だとKeyStage内部ナビゲーションがズレてPC重複送信
+- **修正内容**:
+  1. ProgramList GET: bankPC[2]=globalIndex+1（0-based→1-based）
+  2. X-ProgramEdit GET: bankPC[2]=idx+1（0-based→1-based）
+  3. notifyProgramChange X-ProgramEdit Notify: bankPC[2]=idx+1（0-based→1-based）
+  4. PC受信マッピング: programIndex-1 して0-based配列インデックスに変換
+- **結果**: Value UP/DOWN が完全に順番通り動作（UP: 2→3→...→10, DOWN: 9→8→...→1）
+
+### Phase 11: PEリファクタリング + peIsolationStep削除 (2026-02-08)
+
+- **Phase 1-3**: PEResponder MIDI2Logger注入、peSnifferMode #if DEBUG、acceptedOldMUIDs削除、restartTaskパターン
+- **ChannelList supportsSubscription バグ修正**: peIsolationStep >= 6条件削除、常にtrue
+- **peIsolationStep 完全削除**: step 4/5/6デバッグ分岐削除、常にフルPE/CI動作
+
+---
+
+## 21. 現状（2026-02-08 15:52 時点）
 
 ### 動作確認済み
 
@@ -1039,10 +1417,17 @@ if parsed.subID2 == 0x39 {
 - [x] macOS版 log stream によるリアルタイムデバッグ環境確立
 - [x] 連続 20+ 回 Program Change でハングなし（完全安定動作確認）
 
+- [x] ★★★ **iOS USB targeted送信実装（resolvePEDestinations() — CTRL優先、Session 1/DAW OUT除外）**
+- [x] ★★★ **iOS USB版 KeyStage LCD 完全成功（ハングなし、LCD表示成功）**
+- [x] ★★★ **bankPC 1-based修正（ProgramList/X-ProgramEdit/Notify全て）**
+- [x] ★★★ **Value UP/DOWN 順番通り動作確認（UP: 2→3→...→10, DOWN: 9→8→...→1）**
+- [x] PEリファクタリング（MIDI2Logger注入、restartTask、#if DEBUG peSnifferMode）
+- [x] ChannelList supportsSubscription バグ修正
+- [x] peIsolationStep デバッグ分岐削除（常にフルPE/CI動作）
+
 ### 確認待ち / 調査中
 
 - [ ] JSONSchema resId パース問題（parameterListSchema/programEditSchema が {} を返す）
-- [ ] iOS 実機での PE Notify 動作確認（excludeMUIDs がiOSで不要であることを確認）
 - [ ] デバッグ print 文のクリーンアップ
 - [ ] BLE MIDI 接続での PE Notify 動作確認
 

@@ -104,6 +104,14 @@ public final class MIDIInputManager {
     /// PE Capability handshake completion tracking
     private var peCapabilityReady: Set<MUID> = []
 
+    #if os(macOS)
+    /// Foreign MIDI-CI MUIDs detected from messages not addressed to us.
+    /// On macOS, CoreMIDI creates a built-in MIDI-CI entity that competes
+    /// with M2DX for KeyStage's PE session, causing hangs.
+    /// We detect its MUID from incoming CI messages and send Invalidate MUID
+    /// to make KeyStage forget it.
+    private var detectedForeignCIMUIDs: Set<MUID> = []
+    #endif
 
     /// Debounce task for PE Notify — cancel previous before scheduling new
     private var pendingNotifyTask: Task<Void, Never>?
@@ -180,20 +188,17 @@ public final class MIDIInputManager {
 
     /// Append a line to the debug log buffer (and route PE/CI to os.Logger)
     private func appendDebugLog(_ line: String) {
-        print("[M2DX] \(line)")  // TEMP: devicectl --console 用
         debugLog.append(line)
         if debugLog.count > debugLogMax {
             debugLog.removeFirst()
         }
-        // PE/CI/SNIFF lines also go to peFlowLog for full history + os.Logger
-        let isPE = line.hasPrefix("PE")
-        let isCI = line.hasPrefix("CI")
-        let isSniff = line.hasPrefix("SNIFF")
-        if isPE || isCI || isSniff {
+        // PE/CI/SNIFF lines also go to peFlowLog — cheap first-char check
+        let first = line.first
+        if first == "P" || first == "C" || first == "S" {
             peFlowLog.append(line)
             if peFlowLog.count > peFlowLogMax { peFlowLog.removeFirst() }
-            if isPE { peLogger.info("\(line, privacy: .public)") }
-            else if isCI { ciLogger.info("\(line, privacy: .public)") }
+            if first == "P" { peLogger.info("\(line, privacy: .public)") }
+            else if first == "C" { ciLogger.info("\(line, privacy: .public)") }
             else { peLogger.notice("\(line, privacy: .public)") }
         } else {
             midiLogger.debug("\(line, privacy: .public)")
@@ -444,6 +449,34 @@ public final class MIDIInputManager {
                                     self.appendDebugLog("PE-RX sub=\(subID2) \(data.count)B\(extra)")
                                 }
                             }
+                            #if os(macOS)
+                            // Detect foreign MIDI-CI MUIDs (e.g. macOS built-in entity)
+                            // and send Invalidate MUID to prevent KeyStage PE session interference.
+                            if let parsed = CIMessageParser.parse(data),
+                               parsed.destinationMUID != MUID.broadcast {
+                                let ourMUID = MUID(rawValue: 0x5404629)!
+                                let dest = parsed.destinationMUID
+                                if dest != ourMUID && !self.detectedForeignCIMUIDs.contains(dest) {
+                                    self.detectedForeignCIMUIDs.insert(dest)
+                                    await MainActor.run {
+                                        self.appendDebugLog("CI: foreign MUID \(dest) detected — sending Invalidate")
+                                    }
+                                    // Send Invalidate MUID pretending to be the foreign entity
+                                    // so KeyStage and other devices forget it
+                                    let invalidateMsg = CIMessageBuilder.invalidateMUID(
+                                        sourceMUID: dest,
+                                        targetMUID: dest
+                                    )
+                                    if let midi = self.transport {
+                                        try? await midi.broadcast(invalidateMsg)
+                                    }
+                                    await MainActor.run {
+                                        self.appendDebugLog("CI: Invalidate MUID sent for \(dest)")
+                                    }
+                                }
+                            }
+                            #endif
+
                             // Multi-dispatch: PEResponder, CIManager, PEManager
                             if let resp = self.peResponder {
                                 // PEResponder handles MUID filtering and 0x39 drop internally
@@ -668,13 +701,20 @@ public final class MIDIInputManager {
             }
         ))
 
-        // ProgramList — DX7 factory presets
-        let presetCount = DX7FactoryPresets.all.count
+        // ProgramList — DX7 factory presets (supports offset/limit pagination)
+        let allPresets = DX7FactoryPresets.all
+        let presetCount = allPresets.count
         await responder.registerResource("ProgramList", resource: ComputedResource(
             supportsSubscription: true,
-            get: { _ in
-                let entries = DX7FactoryPresets.all.enumerated().map { index, preset in
-                    "{\"title\":\"\(preset.name)\",\"bankPC\":[0,0,\(index)]}"
+            get: { header in
+                let offset = header.offset ?? 0
+                let limit = header.limit ?? presetCount
+                let startIndex = max(0, min(offset, presetCount))
+                let endIndex = min(startIndex + limit, presetCount)
+                let slice = allPresets[startIndex..<endIndex]
+                let entries = slice.enumerated().map { i, preset in
+                    let globalIndex = startIndex + i
+                    return "{\"title\":\"\(globalIndex + 1):\(preset.name)\",\"bankPC\":[0,0,\(globalIndex + 1)]}"
                 }
                 return Data("[\(entries.joined(separator: ","))]".utf8)
             },
@@ -693,7 +733,7 @@ public final class MIDIInputManager {
                 let (name, idx) = await MainActor.run {
                     (self?.currentProgramName ?? "INIT VOICE", self?.currentProgramIndex ?? 0)
                 }
-                let json = "{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx)],\"currentValues\":[{\"name\":\"Mod Wheel\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Volume\",\"value\":100,\"displayValue\":\"100\",\"displayUnit\":\"\"},{\"name\":\"Expression\",\"value\":127,\"displayValue\":\"127\",\"displayUnit\":\"\"},{\"name\":\"Sustain\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Brightness\",\"value\":64,\"displayValue\":\"64\",\"displayUnit\":\"\"}]}"
+                let json = "{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx + 1)],\"currentValues\":[{\"name\":\"Mod Wheel\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Volume\",\"value\":100,\"displayValue\":\"100\",\"displayUnit\":\"\"},{\"name\":\"Expression\",\"value\":127,\"displayValue\":\"127\",\"displayUnit\":\"\"},{\"name\":\"Sustain\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Brightness\",\"value\":64,\"displayValue\":\"64\",\"displayUnit\":\"\"}]}"
                 return Data(json.utf8)
             }
         ))
@@ -746,13 +786,14 @@ public final class MIDIInputManager {
         ))
     }
 
-    /// Current program name (derived from currentProgramIndex)
+    /// Current program name with 1-based number prefix (e.g. "1:E.PIANO 1")
+    /// KORG Module uses "N:Name" format (1-based) — we match it for KeyStage LCD display.
     private var currentProgramName: String {
         let presets = DX7FactoryPresets.all
         if currentProgramIndex < presets.count {
-            return presets[currentProgramIndex].name
+            return "\(currentProgramIndex + 1):\(presets[currentProgramIndex].name)"
         }
-        return "INIT VOICE"
+        return "1:INIT VOICE"
     }
 
     // MARK: - PE Reply Destination Management
@@ -839,54 +880,37 @@ public final class MIDIInputManager {
 
     /// Handle program change: update internal state and send PE Notify to subscribers.
     private func notifyProgramChange(programIndex: UInt8) {
-        currentProgramIndex = Int(programIndex)
+        // KeyStage sends 1-based bankPC values as PC numbers, convert to 0-based array index
+        currentProgramIndex = max(0, Int(programIndex) - 1)
         let name = currentProgramName
-        let idx = Int(programIndex)
+        let idx = currentProgramIndex
         appendDebugLog("PC: program=\(idx) name=\(name)")
         peLogger.info("PC: program=\(idx) name=\(name, privacy: .public)")
 
-        guard let responder = peResponder else {
-            appendDebugLog("PE-Notify: no responder")
-            return
-        }
-        Task { [weak self] in
-            guard let self else { return }
+        guard let responder = peResponder else { return }
+
+        // Capture values needed off-MainActor before launching Task
+        let knownMUIDs = Set(discoveredPEDevices.map(\.muid))
+
+        // Pre-build notify bodies on MainActor (cheap string ops)
+        let channelListBody = Data("[{\"channel\":1,\"title\":\"Channel 1\",\"programTitle\":\"\(name)\"}]".utf8)
+        let xProgramEditBody = Data("{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx + 1)],\"currentValues\":[{\"name\":\"Mod Wheel\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Volume\",\"value\":100,\"displayValue\":\"100\",\"displayUnit\":\"\"},{\"name\":\"Expression\",\"value\":127,\"displayValue\":\"127\",\"displayUnit\":\"\"},{\"name\":\"Sustain\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Brightness\",\"value\":64,\"displayValue\":\"64\",\"displayUnit\":\"\"}]}".utf8)
+
+        appendDebugLog("PE-Notify: program=\(idx) name=\(name)")
+
+        Task {
             // Wait 500ms to ensure KeyStage has processed the PC message
             try? await Task.sleep(for: .milliseconds(500))
 
-            // Build exclude set: only send Notify to discovered PE devices (i.e. KORG KeyStage).
-            // macOS built-in MIDI-CI entity also subscribes but is not in discoveredPEDevices,
-            // so it gets excluded. Sending Notify to macOS entity causes spurious 0x39 replies.
-            let knownMUIDs = await MainActor.run {
-                Set(self.discoveredPEDevices.map(\.muid))
-            }
+            // Exclude non-KORG MUIDs (e.g. macOS built-in MIDI-CI entity)
             let excludeMUIDs = await responder.subscriberMUIDs().subtracting(knownMUIDs)
-            if !excludeMUIDs.isEmpty {
-                peLogger.info("PE-Notify: excluding \(excludeMUIDs.count) non-KORG MUIDs: \(excludeMUIDs.map { String(describing: $0) }.joined(separator: ","), privacy: .public)")
-            }
 
-            // Notify ChannelList (programTitle update)
-            let channelListBody = Data("[{\"channel\":1,\"title\":\"Channel 1\",\"programTitle\":\"\(name)\"}]".utf8)
-            await MainActor.run {
-                self.appendDebugLog("PE-Notify: sending ChannelList programTitle=\(name)")
-            }
-            peLogger.info("PE-Notify: ChannelList body=\(String(data: channelListBody, encoding: .utf8) ?? "?", privacy: .public)")
             await responder.notify(resource: "ChannelList", data: channelListBody, excludeMUIDs: excludeMUIDs)
-            peLogger.info("PE-Notify: ChannelList sent OK")
-
-            // Notify X-ProgramEdit (name + currentValues for LCD update)
-            // Uses 0x38 (Subscription) with command:notify header per MIDI-CI PE v1.1.
-            let xProgramEditBody = Data("{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx)],\"currentValues\":[{\"name\":\"Mod Wheel\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Volume\",\"value\":100,\"displayValue\":\"100\",\"displayUnit\":\"\"},{\"name\":\"Expression\",\"value\":127,\"displayValue\":\"127\",\"displayUnit\":\"\"},{\"name\":\"Sustain\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Brightness\",\"value\":64,\"displayValue\":\"64\",\"displayUnit\":\"\"}]}".utf8)
-            await MainActor.run {
-                self.appendDebugLog("PE-Notify: sending X-ProgramEdit name=\(name)")
-            }
-            peLogger.info("PE-Notify: X-ProgramEdit body=\(String(data: xProgramEditBody, encoding: .utf8) ?? "?", privacy: .public)")
             await responder.notify(resource: "X-ProgramEdit", data: xProgramEditBody, excludeMUIDs: excludeMUIDs)
 
-            await MainActor.run {
-                self.appendDebugLog("PE-Notify: all sent OK")
+            await MainActor.run { [weak self] in
+                self?.appendDebugLog("PE-Notify: sent OK")
             }
-            peLogger.info("PE-Notify: all sent OK")
         }
     }
 
@@ -960,7 +984,7 @@ public final class MIDIInputManager {
         if jsonParts.count == 1 {
             return "hdr=\(jsonParts[0])"
         }
-        return "hdr=\(jsonParts[0]) body=\(String(jsonParts[1].prefix(300)))"
+        return "hdr=\(jsonParts[0]) body=\(String(jsonParts[1].prefix(2000)))"
     }
 
     // MARK: - PE Initiator (Remote Device Query)
