@@ -104,6 +104,9 @@ public final class MIDIInputManager {
     /// PE Capability handshake completion tracking
     private var peCapabilityReady: Set<MUID> = []
 
+    /// CC value state for PE X-ProgramEdit currentValues (7-bit, 0-127)
+    private var ccValues: [UInt8: Int] = [7: 100, 11: 127, 74: 64]
+
     #if os(macOS)
     /// Foreign MIDI-CI MUIDs detected from messages not addressed to us.
     /// On macOS, CoreMIDI creates a built-in MIDI-CI entity that competes
@@ -738,10 +741,9 @@ public final class MIDIInputManager {
         await responder.registerResource("X-ProgramEdit", resource: ComputedResource(
             supportsSubscription: true,
             get: { [weak self] _ in
-                let (name, idx) = await MainActor.run {
-                    (self?.currentProgramName ?? "INIT VOICE", self?.currentProgramIndex ?? 0)
+                let json = await MainActor.run {
+                    self?.xProgramEditJSON ?? "{}"
                 }
-                let json = "{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx + 1)],\"currentValues\":[{\"name\":\"Mod Wheel\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Volume\",\"value\":100,\"displayValue\":\"100\",\"displayUnit\":\"\"},{\"name\":\"Expression\",\"value\":127,\"displayValue\":\"127\",\"displayUnit\":\"\"},{\"name\":\"Sustain\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Brightness\",\"value\":64,\"displayValue\":\"64\",\"displayUnit\":\"\"}]}"
                 return Data(json.utf8)
             }
         ))
@@ -753,10 +755,8 @@ public final class MIDIInputManager {
             supportsSubscription: true,
             get: { _ in
                 let params = [
-                    "{\"name\":\"Mod Wheel\",\"controlcc\":1,\"default\":0}",
                     "{\"name\":\"Volume\",\"controlcc\":7,\"default\":100}",
                     "{\"name\":\"Expression\",\"controlcc\":11,\"default\":127}",
-                    "{\"name\":\"Sustain\",\"controlcc\":64,\"default\":0}",
                     "{\"name\":\"Brightness\",\"controlcc\":74,\"default\":64}"
                 ]
                 return Data("[\(params.joined(separator: ","))]".utf8)
@@ -802,6 +802,32 @@ public final class MIDIInputManager {
             return "\(currentProgramIndex + 1):\(presets[currentProgramIndex].name)"
         }
         return "1:INIT VOICE"
+    }
+
+    /// Build currentValues JSON array from ccValues state
+    private var currentValuesJSON: String {
+        let entries: [(String, UInt8)] = [
+            ("Volume", 7), ("Expression", 11), ("Brightness", 74)
+        ]
+        let items = entries.map { name, cc in
+            let v = ccValues[cc] ?? 0
+            return "{\"name\":\"\(name)\",\"value\":\(v),\"displayValue\":\"\(v)\",\"displayUnit\":\"\"}"
+        }
+        return "[\(items.joined(separator: ","))]"
+    }
+
+    /// Build X-ProgramEdit JSON body from current state
+    private var xProgramEditJSON: String {
+        let name = currentProgramName
+        let idx = currentProgramIndex
+        return "{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx + 1)],\"currentValues\":\(currentValuesJSON)}"
+    }
+
+    /// Update a CC value from UI and notify KeyStage via PE
+    public func updateCC(_ cc: UInt8, value: Int) {
+        guard ccValues.keys.contains(cc) else { return }
+        ccValues[cc] = value
+        notifyCCChange()
     }
 
     // MARK: - PE Reply Destination Management
@@ -902,7 +928,7 @@ public final class MIDIInputManager {
 
         // Pre-build notify bodies on MainActor (cheap string ops)
         let channelListBody = Data("[{\"channel\":1,\"title\":\"Channel 1\",\"programTitle\":\"\(name)\"}]".utf8)
-        let xProgramEditBody = Data("{\"name\":\"\(name)\",\"bankPC\":[0,0,\(idx + 1)],\"currentValues\":[{\"name\":\"Mod Wheel\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Volume\",\"value\":100,\"displayValue\":\"100\",\"displayUnit\":\"\"},{\"name\":\"Expression\",\"value\":127,\"displayValue\":\"127\",\"displayUnit\":\"\"},{\"name\":\"Sustain\",\"value\":0,\"displayValue\":\"0\",\"displayUnit\":\"\"},{\"name\":\"Brightness\",\"value\":64,\"displayValue\":\"64\",\"displayUnit\":\"\"}]}".utf8)
+        let xProgramEditBody = Data(xProgramEditJSON.utf8)
 
         appendDebugLog("PE-Notify: program=\(idx) name=\(name)")
 
@@ -919,6 +945,25 @@ public final class MIDIInputManager {
             await MainActor.run { [weak self] in
                 self?.appendDebugLog("PE-Notify: sent OK")
             }
+        }
+    }
+
+    // MARK: - PE Notify (CC value changes)
+
+    /// Send X-ProgramEdit Notify when CC values change (debounced)
+    private var ccNotifyTask: Task<Void, Never>?
+
+    private func notifyCCChange() {
+        ccNotifyTask?.cancel()
+        ccNotifyTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled, let self else { return }
+            guard let responder = self.peResponder else { return }
+
+            let body = Data(self.xProgramEditJSON.utf8)
+            let knownMUIDs = Set(self.discoveredPEDevices.map(\.muid))
+            let excludeMUIDs = await responder.subscriberMUIDs().subtracting(knownMUIDs)
+            await responder.notify(resource: "X-ProgramEdit", data: body, excludeMUIDs: excludeMUIDs)
         }
     }
 
@@ -1148,6 +1193,12 @@ public final class MIDIInputManager {
                         onNoteOff?(n)
                     }
                 }
+                // Update CC state and notify KeyStage
+                if ccValues.keys.contains(byte3) {
+                    let val7 = Int(Double(val32) / Double(UInt32.max) * 127.0)
+                    ccValues[byte3] = val7
+                    notifyCCChange()
+                }
             }
 
         case 0xE: // Pitch Bend (32-bit unsigned, center=0x80000000)
@@ -1230,6 +1281,11 @@ public final class MIDIInputManager {
                         for n: UInt8 in 0...127 {
                             onNoteOff?(n)
                         }
+                    }
+                    // Update CC state and notify KeyStage
+                    if ccValues.keys.contains(controller) {
+                        ccValues[controller] = Int(value)
+                        notifyCCChange()
                     }
                 }
                 offset += 3

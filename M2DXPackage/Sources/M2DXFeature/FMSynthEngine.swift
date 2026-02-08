@@ -537,6 +537,7 @@ final class FMSynthEngine: @unchecked Sendable {
     private var voices: [Voice] = Array(repeating: Voice(), count: kMaxVoices)
     private var sampleRate: Float = 44100
     private var masterVolume: Float = 0.7
+    private var expression: Float = 1.0
     private var algorithm: Int = 0
     private var sustainPedalOn: Bool = false
     private var pitchBendFactor: Float = 1.0
@@ -694,7 +695,7 @@ final class FMSynthEngine: @unchecked Sendable {
         }
 
         // 4. Render (entirely lock-free from here)
-        let vol = masterVolume
+        let vol = masterVolume * expression
 
         // Pre-compute active voice count and normalization factor (once per buffer)
         for i in 0..<kMaxVoices { voices[i].checkActive() }
@@ -746,6 +747,10 @@ final class FMSynthEngine: @unchecked Sendable {
 
     private func doControlChange(_ cc: UInt8, value32: UInt32) {
         switch cc {
+        case 7: // Volume: 32-bit → 0.0–1.0
+            masterVolume = Float(value32) / Float(UInt32.max)
+        case 11: // Expression: 32-bit → 0.0–1.0
+            expression = Float(value32) / Float(UInt32.max)
         case 64: // Sustain pedal: 32-bit threshold at 0x40000000
             let on = value32 >= 0x40000000
             sustainPedalOn = on

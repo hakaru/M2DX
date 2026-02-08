@@ -20,6 +20,8 @@ public struct M2DXRootView: View {
     @State private var selectedPreset: DX7Preset?
     @State private var midiChannel: Int = 0
     @State private var masterTuning: Double = 0
+    @State private var volumeCC: Double = 100
+    @State private var expressionCC: Double = 127
     @State private var feedbackValues: [Float] = Array(repeating: 0, count: 6)
 
     @State private var operatorEnvelopes: [EnvelopeParameters] = (0..<6).map { _ in
@@ -46,6 +48,9 @@ public struct M2DXRootView: View {
                 .padding(.bottom, 12)
             }
 
+            // ── Global Controls ──
+            globalControlSection
+
             // ── Keyboard (show/hide) ──
             if showKeyboard {
                 keyboardSection
@@ -67,6 +72,12 @@ public struct M2DXRootView: View {
             }
             midiInput.onControlChange = { controller, value32 in
                 audioEngine.controlChange(controller, value32: value32)
+                let normalized = Double(value32) / Double(UInt32.max) * 127.0
+                switch controller {
+                case 7: volumeCC = normalized
+                case 11: expressionCC = normalized
+                default: break
+                }
             }
             midiInput.onPitchBend = { value32 in
                 audioEngine.pitchBend(value32)
@@ -79,6 +90,10 @@ public struct M2DXRootView: View {
                 selectedPreset = preset
             }
             midiInput.start()
+
+            // Send initial CC values
+            audioEngine.controlChange(7, value32: UInt32(volumeCC / 127.0 * Double(UInt32.max)))
+            audioEngine.controlChange(11, value32: UInt32(expressionCC / 127.0 * Double(UInt32.max)))
 
             // Keep alive until view disappears (.task cancels automatically)
             while !Task.isCancelled {
@@ -295,6 +310,62 @@ public struct M2DXRootView: View {
                 )
             }
         )
+    }
+
+    // MARK: - Global Control Section
+
+    private var globalControlSection: some View {
+        VStack(spacing: 4) {
+            Divider()
+            HStack(spacing: 16) {
+                HStack(spacing: 6) {
+                    Text("Vol")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, alignment: .trailing)
+                    Slider(value: $volumeCC, in: 0...127, step: 1)
+                        .frame(minWidth: 80)
+                    Text("\(Int(volumeCC))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, alignment: .trailing)
+                }
+                HStack(spacing: 6) {
+                    Text("Exp")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, alignment: .trailing)
+                    Slider(value: $expressionCC, in: 0...127, step: 1)
+                        .frame(minWidth: 80)
+                    Text("\(Int(expressionCC))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, alignment: .trailing)
+                }
+                Button {
+                    midiInput.stop()
+                    midiInput.start()
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+        }
+        .background(Color.m2dxSecondaryBackground)
+        .onChange(of: volumeCC) { _, newValue in
+            let v32 = UInt32(newValue / 127.0 * Double(UInt32.max))
+            audioEngine.controlChange(7, value32: v32)
+            midiInput.updateCC(7, value: Int(newValue))
+        }
+        .onChange(of: expressionCC) { _, newValue in
+            let v32 = UInt32(newValue / 127.0 * Double(UInt32.max))
+            audioEngine.controlChange(11, value32: v32)
+            midiInput.updateCC(11, value: Int(newValue))
+        }
     }
 
     // MARK: - Keyboard Section
