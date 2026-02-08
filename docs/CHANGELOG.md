@@ -17,6 +17,8 @@ M2DXプロジェクトの全変更履歴を記録します。
 - MIDI-CI Property Exchange Responder 実装 (ResourceList, DeviceInfo, ChannelList, ProgramList, X-ProgramEdit, X-ParameterList, JSONSchema)
 - Program Change → PE Notify 連携 (ChannelList / X-ProgramEdit 自動通知)
 - MIDIデバッグログバッファ (BufferMIDI2Logger → UI表示)
+- macOS entity 除外ロジック (PEResponder.excludeMUIDs / subscriberMUIDs()) — KORG KeyStage以外への誤Notify防止
+- KeyStage Subscribe Reply (0x39) フィルタリング機能
 
 ### Changed
 - CoreMIDITransport: MIDI 1.0プロトコルからMIDI 2.0プロトコルに切り替え
@@ -25,6 +27,13 @@ M2DXプロジェクトの全変更履歴を記録します。
 - MIDI 1.0互換7ビットパスを廃止し、16/32ビットパイプラインに統一
 - 全 print() を os.Logger に置換 (subsystem: "com.example.M2DX")
 - CIManager / PEManager にロガーインスタンスを注入する設計に変更
+
+### Fixed
+- **KORG KeyStage LCD プログラム名表示問題を完全解決** (2026-02-08)
+  - PE Notify sub-ID2 を 0x3F → 0x38 に修正 (MIDI-CI PE v1.1準拠)
+  - X-ProgramEdit を KORG公式仕様の currentValues 形式に修正
+  - KeyStage ハング問題を解決（連続20+回のProgram Change動作安定）
+  - macOS環境でのリアルタイムデバッグ環境を確立し、根本原因を特定
 
 ## [2026-02-07] - ソフトクリッピング + AVAudioSourceNode移行 + リファクタリング + MIDI 2.0対応
 

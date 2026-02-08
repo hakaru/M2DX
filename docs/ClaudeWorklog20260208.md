@@ -1409,3 +1409,366 @@
 - debugConnectedCountはSettingsView.swiftで使用中のため削除対象外
 次のTODO: コミット
 ---
+
+---
+2026-02-08 11:27
+作業項目: USB版KeyStage LCD プログラム名非表示の原因調査
+追加機能の説明:
+- PEResponder.notify() → sendReply() → transport.broadcast() のフロー追跡
+- broadcast()はMIDISend()（レガシーMIDI 1.0 API）を使用（CoreMIDITransport.swift:367）
+- USB MIDI 2.0デバイス（KeyStage）にはMIDI 1.0 SysExが正しく届かない可能性
+- sendSysEx7AsUMP()メソッド（UMP type 0x3）が存在するがbroadcast経路では使われていない
+- M2DXはPEResponder.setReplyDestinations()を一度も呼んでいない → broadcast経路のみ
+- PEResponder.sendReply()には targeted（replyDestinations設定時→UMP送信）とbroadcast（未設定時→レガシー送信）の2経路がある
+決定事項:
+- 原因: PE NotifyがレガシーMIDI 1.0 APIで送信されているため、USB MIDI 2.0接続のKeyStageに届いていない
+- 対策: MIDIInputManagerでdiscoveredPEDevicesからKeyStageのdestinationIDを取得し、PEResponder.setReplyDestinations()に設定する
+次のTODO: replyDestinations設定の実装
+---
+
+---
+2026-02-08 11:32
+作業項目: USB版KeyStage LCD プログラム名非表示の修正
+追加機能の説明:
+- 原因特定: PE NotifyがCoreMIDITransport.broadcast()経由でMIDISend()（MIDI 1.0レガシーAPI）で送信されていた
+  - USB MIDI 2.0接続のKeyStageにはMIDI 1.0 SysExが正しく届かない
+  - PEResponder.sendReply()にはtargeted送信経路（sendSysEx7AsUMP→UMP type 0x3）があるが、replyDestinationsが未設定のため使われなかった
+- 修正: updatePEReplyDestinations()メソッド追加
+  - CIManager.destination(for:)でdiscoveredPEDevicesのdestination IDを解決
+  - PEResponder.setReplyDestinations()に設定
+  - deviceDiscovered / deviceLost イベント時に自動更新
+  - targeted経路はCoreMIDITransport.sendSysEx7AsUMP()を使用し、UMP SysEx7フォーマットでMIDI 2.0プロトコル配信
+- iOS実機ビルド BUILD SUCCEEDED
+決定事項:
+- CIManagerはactor isolatedなのでdestination(for:)にawait必要 → Task内でasyncループ
+- discoverPEDevicesリストをキャプチャしてTask内でCI actorにアクセス
+次のTODO: 実機テスト — KeyStage USB接続 → PC送信 → LCD プログラム名表示確認
+---
+
+---
+2026-02-08 11:33
+作業項目: 実機ビルド＋インストール (Midi デバイス)
+追加機能の説明:
+- デバイス: Midi (00008120-001211102EEB401E) iOS 26.2.1
+- xcodebuild -destination 'id=00008120-001211102EEB401E' BUILD SUCCEEDED
+決定事項: 実機ビルド成功
+次のTODO: KeyStage USB接続 → PC送信 → LCDプログラム名表示確認
+---
+
+---
+2026-02-08 11:37
+作業項目: replyDestinations設定をrevert — KeyStageハング再発のため
+追加機能の説明:
+- replyDestinationsを設定すると全PE応答（GET Reply, Subscribe Reply, Notify全て）がUMP SysEx7経由になる
+- PE初期フロー（ResourceList GET Reply等）がUMP SysEx7で送信されKeyStageがハング
+- macOS版で確認済みのハングと同じ現象
+- updatePEReplyDestinations()メソッドとdeviceDiscovered/deviceLostでの呼び出しを削除
+- 実機再ビルド BUILD SUCCEEDED
+決定事項:
+- replyDestinations全体切替はNG。PE Notifyだけ別経路で送る必要がある
+- PEResponder.notify()内でsendReply()ではなく直接targeted UMP送信する方法を検討
+- または: broadcast経路でもKeyStageに届いていたのか？LCDに表示されない原因は別か？
+次のTODO: revert版で実機テスト → PEフロー正常動作確認 → Notifyが届いているかログ確認
+---
+
+---
+2026-02-08 11:37
+作業項目: KeyStageハング原因分析 — PEフロー完走後にハング
+追加機能の説明:
+- revert版でもM2DX再起動でKeyStage LCDハング発生
+- ログ: PEフロー完走（ResourceList→DeviceInfo→ChannelList→ProgramList→X-ParameterList→X-ProgramEdit→JSONSchema×2）→Subscribe sub-1〜sub-4成功→ハング
+- broadcast mode で3 destinationsに全PE応答を送信
+- 87ca00eとの差分確認: PE リソース設定（canSubscribe等）は変更なし
+- 87ca00eにはMUID DROPフィルタがあったが受信側のみ、送信broadcastに影響なし
+- 問題仮説: PE応答がKeyStageの3 destination全てにbroadcastされ、適切でないポートへの応答がKeyStageを混乱させている
+決定事項: broadcastを止めてtargeted送信に変更する方針は正しいが、UMP SysEx7ではなくlegacy MIDISend()で送る必要あり
+次のTODO: PEResponder.sendReply()のtargeted経路でlegacy send()を使うよう修正
+---
+
+---
+2026-02-08 11:42
+作業項目: PE targeted送信をlegacy MIDISend()に変更 + 実機ビルド
+追加機能の説明:
+- PEResponder.sendReply() targeted経路: CoreMIDITransport.sendSysEx7AsUMP() → transport.send() (legacy) に変更
+  - UMP SysEx7がKeyStageハングの原因だった可能性を排除
+  - legacy MIDISend()はPE GET/SET/Subscribe Replyで実績あり
+- MIDIInputManager: updatePEReplyDestinations()を再追加
+  - CIManager.destination(for:)でModuleポートを解決
+  - PE応答をKeyStageの正しいdestinationのみに送信（3 dest broadcast → 1 dest targeted）
+- 実機ビルド BUILD SUCCEEDED
+決定事項: targeted + legacy送信の組み合わせでテスト
+次のTODO: 実機テスト — M2DX再起動 → ハングしないか確認 → PC送信 → LCD表示確認
+---
+
+---
+2026-02-08 11:55
+作業項目: PE replyDestinations を PEResponder init で同期設定（タイミング問題修正）
+追加機能の説明:
+- 原因: updatePEReplyDestinations()はdeviceDiscoveredイベント（MainActor経由）で呼ばれるがPEフローはそれより前に開始
+- Discovery Reply送信 → KeyStageが即PE GET開始 → broadcast mode → 3 dests送信 → ハング
+- 修正:
+  1. PEResponder.init()にreplyDestinationsパラメータ追加
+  2. resolvePEDestinations() static メソッド追加（CoreMIDI API直接使用、同期）
+  3. PEResponder作成時にreplyDestinationsを渡す（CIManager.start()より前）
+  4. 優先順: Module(BT) > CTRL(USB) > DAW > broadcast fallback
+- PEResponder.sendReply()はlegacy MIDISend()使用（UMP SysEx7は使わない）
+- 実機ビルド BUILD SUCCEEDED
+決定事項: PEResponder作成前にCoreMIDI APIで同期的にdestination解決
+次のTODO: KeyStage USB抜き差しで復旧 → M2DX起動 → ハングしないか確認
+---
+
+---
+2026-02-08 12:01
+作業項目: destination名ログ追加 + フォールバック拡張
+追加機能の説明:
+- resolvePEDestinations()が空を返していた → destination名にModule/CTRL/DAWが含まれていない
+- ログ追加: 全destination名を表示（PE: MIDI dests=[name1, name2, ...]）
+- フォールバック拡張: Module > CTRL > DAW > "keystage" > 最初のnon-KBD > 最初のdest
+- これで必ず1つのdestinationが選択される（空は返さない）
+- 実機ビルド BUILD SUCCEEDED
+決定事項: destination名をログで確認し、必要に応じてパターン追加
+次のTODO: KeyStage USB復旧 → M2DX起動 → ログで destination名確認 + ハングテスト
+---
+
+---
+2026-02-08 12:04
+作業項目: devicectl で実機にインストール
+追加機能の説明:
+- xcodebuild build はビルドのみでインストールしない問題を発見
+- xcrun devicectl device install app でM2DX.appをデバイスにインストール成功
+- bundleID: com.example.M2DX
+決定事項: 今後はビルド後に devicectl install も実行する
+次のTODO: KeyStage USB復旧 → M2DX起動 → PE: MIDI dests=ログ確認
+---
+
+---
+2026-02-08 12:11
+作業項目: KeyStage LCDハング原因調査 — PE応答内容の特定
+追加機能の説明:
+- 前セッション結果: targeted legacy MIDISend(CTRLポート1つ)でもLCDハング
+- broadcast vs targeted は原因でない → PE応答の内容自体が原因
+- 調査方針: どのPE応答がハングを引き起こすか特定
+  1. CIManager Discovery Reply のbroadcast問題を確認
+  2. peIsolationStep活用で段階的にPE応答を有効化
+  3. 最小ResourceList(DeviceInfoのみ)でテスト
+決定事項: transport方式は問題なし、PE応答コンテンツの調査に移行
+次のTODO: MIDIInputManager の peIsolationStep / PE disable 機能を確認し、段階的テスト方針を決定
+---
+
+---
+2026-02-08 12:14
+作業項目: PE段階テスト Step 4 実装 + CIManager targeted送信
+追加機能の説明:
+- peIsolationStep に新しい値を追加:
+  - Step 4: DeviceInfoのみ(canSubscribe無し) ← 今回テスト
+  - Step 5: DeviceInfo + ChannelList(canSubscribe無し)
+  - Step 6: DeviceInfo + ChannelList + canSubscribe
+- registerPEResources() に step パラメータ追加、stepでリソース登録を制御
+- CIManager.handleDiscoveryInquiry() のDiscovery Reply送信もtargeted化
+  - CIManager に replyDestinations プロパティ + setReplyDestinations() メソッド追加
+  - M2DX側: resolvePEDestinations()をCIManager作成前に移動、CIにも設定
+- stale log行修正: "PE-Resp: N dests (broadcast mode)" → "MIDI: N destinations available"
+- 実機ビルド BUILD SUCCEEDED + devicectl install OK
+決定事項: Step 4(DeviceInfoのみ)でハングするか確認、ハングしなければStepを上げていく
+次のTODO: KeyStage USB復旧 → M2DX起動 → Step 4でハングテスト
+---
+
+---
+2026-02-08 12:17
+作業項目: Step 4 ハングなし確認 → Step 5 へ
+追加機能の説明:
+- Step 4(DeviceInfoのみ) テスト結果: ハングなし
+- PE Flow: ResourceList(1件) → DeviceInfo → ChannelList(404) で停止、正常
+- 次: Step 5 (DeviceInfo + ChannelList, canSubscribe無し)
+決定事項: Discovery Reply + ResourceList + DeviceInfo は安全
+次のTODO: Step 5 ビルド → インストール → テスト
+---
+
+---
+2026-02-08 12:20
+作業項目: Step 5 ハングなし確認 → Step 6 へ
+追加機能の説明:
+- Step 5(DeviceInfo + ChannelList, canSubscribe無し) テスト結果: ハングなし
+- 次: Step 6 (DeviceInfo + ChannelList + canSubscribe=true)
+決定事項: ChannelList GET応答自体は安全。Subscribe有無が分岐点か
+次のTODO: Step 6 ビルド → インストール → テスト
+---
+
+---
+2026-02-08 12:22
+作業項目: Step 6 ハングなし確認 → Step 3 (フル) へ
+追加機能の説明:
+- Step 6(DeviceInfo + ChannelList + canSubscribe) テスト結果: ハングなし
+- Subscribe(0x38 start) + Notify送信も正常動作
+- 次: Step 3 (フル5リソース) でtargeted送信のままテスト
+- もしStep 3でもハングしなければ → 原因はbroadcast(3ポート全送信)だった
+決定事項: Subscribe/Notifyフロー自体は安全
+次のTODO: Step 3 ビルド → インストール → テスト
+---
+
+---
+2026-02-08 12:25
+作業項目: ★ KeyStage LCDハング根本原因特定 + 修正完了
+追加機能の説明:
+- Step 3(フル5リソース + targeted送信) テスト結果: ハングなし
+- フルPEフロー完走、Program Change Notify正常動作確認
+- 根本原因: USB 3ポート(Session 1, CTRL, DAW OUT)全てにbroadcast送信していたこと
+  - Session 1やDAW OUTにCI/PEメッセージを送ると KeyStage が混乱しLCDハング
+  - CTRLポートのみにtargeted送信で完全解決
+- 修正箇所:
+  1. PEResponder: replyDestinations パラメータでtargeted送信
+  2. CIManager: replyDestinations + setReplyDestinations() で Discovery Reply もtargeted
+  3. MIDIInputManager: resolvePEDestinations() でCoreMIDI API直接使用、CTRL優先解決
+- 段階テスト結果:
+  - Step 4(DeviceInfoのみ): ハングなし
+  - Step 5(+ChannelList): ハングなし
+  - Step 6(+canSubscribe): ハングなし
+  - Step 3(フル): ハングなし ← targeted送信が鍵
+決定事項: targeted送信が正式な修正。peIsolationStepは3に固定してコミット準備
+次のTODO: KeyStage LCDにプログラム名が表示されるか確認、コード整理 + コミット
+---
+
+---
+2026-02-08 12:27
+作業項目: LCD非表示の原因調査 — macOS版との比較
+追加機能の説明:
+- macOS版での成功要件:
+  1. PE Notify sub-ID2 = 0x38 (CI v1.1) ← コード確認: 既に正しい
+  2. command:notify ヘッダー ← コード確認: notifyHeader()に含まれる
+  3. X-ProgramEdit name フィールドがLCD表示を制御
+  4. 初回 X-ProgramEdit GET Reply で「INIT VOIC」がLCDに表示された
+- iOS版の現状: Notify送信ログは出ているがLCDに反映なし
+- 疑問点: 
+  - KeyStageがX-ProgramEditをGET/Subscribeしているか？
+  - PE Flow Logの全文確認が必要
+決定事項: PE Flow Log全文でKeyStageのGET/Subscribe状況を確認
+次のTODO: ユーザーにPE Flow Log全文の提供を依頼
+---
+
+---
+2026-02-08 12:33
+作業項目: Step 3 フル — 2回目ハング + LCD非表示の調査
+追加機能の説明:
+- Step 3 1回目: ハングなし、LCD非表示
+- Step 3 2回目: 約7回のPC変更後にハング、LCD非表示
+- ログ分析:
+  - フルPEフロー完走（5リソースGET + 4 Subscribe OK）
+  - 各PC後: Notify送信 → 0x39 Reply → X-ParameterList再GET のサイクルが繰り返される
+  - iOS entity MUIDs (0x4EC8E9E, 0x8A8A6E2) が背景で Discovery している
+  - ChannelList Subscribeのlog callbackが欠落（タイミング問題?）
+- macOS版との主な違い:
+  - macOS: broadcast(2 dests) / iOS: targeted(1 dest=CTRL)
+  - macOS: macOS entity除外あり / iOS: iOS entity除外も動作するはず
+  - macOS: X-ParameterList再GETがあったか不明
+決定事項: LCD非表示 + 間欠ハングの2問題を並行調査
+次のTODO: PE_Implementation_Notes確認、macOS版との通信パターン比較
+---
+
+---
+2026-02-08 12:35
+作業項目: CTRL+DAW 2ポートtargeted送信テスト
+追加機能の説明:
+- macOS版成功時は2ポート(KBD/CTRL + DAW IN)にbroadcast送信
+- iOS版はCTRL 1ポートのみだったがLCD非表示
+- 仮説: macOSと同様に2ポートに送信すればLCD表示される可能性
+- resolvePEDestinations() を変更:
+  - USB KORG: CTRL + DAW OUT の2ポートに送信（Session 1は除外）
+  - BT KORG: Module のみ（変更なし）
+  - フォールバックからもSession 1を除外
+- 実機ビルド BUILD SUCCEEDED + devicectl install OK
+決定事項: CTRL+DAW 2ポートでLCD表示テスト
+次のTODO: KeyStage USB復旧 → M2DX起動 → LCD表示 + ハング確認
+---
+
+---
+2026-02-08 12:38
+作業項目: ★バグ発見 — ChannelList supportsSubscription が Step 3 で false
+追加機能の説明:
+- 根本原因: registerPEResources() の ChannelList 登録で supportsSubscription: step >= 6
+  - Step 3: 3 >= 6 = false → ChannelList Subscribe が 405 拒否
+  - macOS版: supportsSubscription: true → ChannelList Subscribe 成功
+- 証拠: ProgramList が sub-1 (ChannelListの次が sub-1 = ChannelList は Subscribe 未成功)
+- 影響:
+  1. LCD非表示: KeyStage は canSubscribe:true と宣言されたリソースの Subscribe 拒否で異常動作
+  2. ハング: 405拒否 + Notify送信の組み合わせで混乱
+- 修正: supportsSubscription: step != 5 に変更（Step 5のみfalse）
+- CTRL+DAWからCTRL-onlyに戻す（DAW OUTもハング要因）
+決定事項: ChannelList Subscribe バグが LCD非表示+ハングの主要因
+次のTODO: バグ修正 + CTRL-only + ビルド + テスト
+---
+
+---
+2026-02-08 12:42
+作業項目: KeyStage未復旧状態でのテスト結果
+追加機能の説明:
+- PE Flow Log 8件のみ — KeyStageがDiscovery Replyを返していない
+- PEフロー未開始のままNotify送信（subscriberなしでno-op）
+- MIDI自体は正常（2,959メッセージ、NoteOff受信OK）
+- 原因: 前回ハング後にKeyStage USB抜き差ししていない
+決定事項: テスト前にKeyStage USB抜き差しが必要
+次のTODO: KeyStage USB抜き差し → M2DX起動 → ChannelList Subscribe修正の動作確認
+---
+
+---
+2026-02-08 12:46
+作業項目: iOS entity干渉問題の発見
+追加機能の説明:
+- PE Flow Logの0x35(GET Reply)が全てdst=0xBB77068(iOS entity)
+- M2DX(0x5404629)にはPE GETが一つも来ていない
+- KeyStageがiOS内蔵MIDI-CI entityとPEフローを実行し、M2DXを無視
+- macOSでも同様だったが、macOSではM2DXにもGETが来ていた
+- iOSではタイミングによりKeyStageがiOS entityのみを選択する場合がある
+- KeyStage MUID変化: 0xF3EDB46→0x6525F32 (USB抜き差しで変わる)
+- ChannelList Subscribe修正は未テスト（iOS entity干渉で正しいテストができず）
+決定事項: iOS entity干渉が不安定さの主要因
+次のTODO: KeyStage完全USB抜き差しリセット後に再テスト（ChannelList Subscribe修正版）
+---
+
+---
+2026-02-08 12:50
+作業項目: ChannelList Subscribe修正版テスト — PEフロー完走
+追加機能の説明:
+- 全GETが dst=MUID(0x5404629) (M2DX) に正しく到達
+- ChannelList Subscribe修正成功:
+  - ChannelList → sub-1 ✓ (以前は405拒否)
+  - ProgramList → sub-2 ✓
+  - X-ParameterList → sub-3 ✓
+  - X-ProgramEdit → sub-4 ✓
+- ResourceList body表示にcanSubscribeが正しく含まれている
+- PE Flow Log 38件、初期PEセットアップ完了
+決定事項: ChannelList Subscribe修正が正しく動作
+次のTODO: LCD表示確認、PC変更でLCD更新されるか、ハングしないか確認
+---
+
+---
+2026-02-08 12:53
+作業項目: ★★★★★ iOS USB版 KeyStage LCD プログラム名表示 完全成功
+追加機能の説明:
+- ユーザー確認: LCD表示成功、PC変更でLCD更新成功
+- 「反応が遅くハングと誤認していたパターンがあったかも」— 遅延はあるが正常動作
+- 修正箇所まとめ（全3点）:
+  1. PEResponder + CIManager targeted送信（CTRLポートのみ、Session 1/DAW OUT除外）
+     - Session 1/DAW OUTへのCI/PEメッセージがKeyStage LCDハングの原因だった
+  2. ChannelList supportsSubscription バグ修正（step >= 6 → step != 5）
+     - Step 3でChannelList Subscribeが405拒否されていた
+  3. CIManager Discovery Replyもtargeted送信化
+     - handleDiscoveryInquiry()が全ポートにbroadcastしていた
+- 根本原因（2つ）:
+  a. USB 3ポート全broadcastがKeyStage LCDハングを引き起こす
+  b. ChannelList Subscribe拒否でKeyStageのPEフローが不完全だった
+- 補足: iOS entity干渉でPEフローがM2DXに来ない場合がある（タイミング依存）
+決定事項: iOS USB版LCD表示成功。コード整理+コミット準備
+次のTODO: peIsolationStep debug levels整理、コード整理、コミット
+---
+
+---
+2026-02-08 12:56
+作業項目: コード整理 — peIsolationStepデバッグ分岐の削除
+追加機能の説明:
+- registerPEResources(): step 4/5/6デバッグ分岐を削除、step引数自体を削除
+- peIsolationStep変数と関連条件分岐を削除（常にフルPE/CI動作）
+- ChannelList supportsSubscription: 常にtrue（step!=5条件不要になる）
+- step参照のログメッセージを整理
+決定事項: デバッグステップは役割を果たしたため削除。本番コードはフルPE/CIのみ
+次のTODO: コード編集 → 実機ビルド確認 → コミット
+---

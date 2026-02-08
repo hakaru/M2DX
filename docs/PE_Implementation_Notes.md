@@ -790,3 +790,260 @@ kill $BGPID
 - KORG KeyStage System Updater: https://www.korg.com/us/support/download/software/0/927/5079/
 - MIDI-CI PE Common Rules: [M2-103-UM (AMEI)](https://amei.or.jp/midistandardcommittee/MIDI2.0/MIDI2.0-DOCS/M2-103-UM_v1-1_Common_Rules_for_MIDI-CI_Property_Exchange.pdf)
 - MIDI-CI PE Foundational Resources: [M2-105-UM (AMEI)](https://amei.or.jp/midistandardcommittee/MIDI2.0/MIDI2.0-DOCS/M2-105-UM_v1-1-1_Property_Exchange_Foundational_Resources.pdf)
+
+---
+
+## 15. PE Notify sub-ID2 修正（0x3F → 0x38）— KeyStage LCD表示問題の最終解決 (2026-02-08)
+
+### 問題の経緯
+
+X-ProgramEdit currentValues 形式への修正（Phase 7）により KeyStage ハングは解決したが、
+**PE Notify によるプログラム名更新がKeyStage LCDに反映されない**問題が残っていた。
+
+### 症状
+
+- Program Change 受信時に M2DX が PE Notify (0x3F) を送信
+- KeyStage は Notify を受信するが、**LCD にプログラム名が表示されない**
+- KeyStage が **部分的にハング**（Program Change 無反応、Note On は可能）
+- KeyStage 再起動で復旧
+
+### 根本原因の発見
+
+**MIDI-CI Property Exchange v1.1 仕様の Notify 方式の違い**
+
+MIDI-CI PE v1.1 では、Subscription Notify に 2 つの方式が存在:
+
+1. **0x3F (PE Notify)** — CI v1.2 で導入された専用 Notify メッセージ
+2. **0x38 (Subscribe) + command:notify ヘッダー** — CI v1.1 互換の Notify 方式
+
+**KORG KeyStage は CI v1.1 準拠デバイスであり、0x3F (PE Notify) に未対応。**
+0x3F を受信すると「未知のメッセージ」として処理し、部分的にハングする。
+
+### 修正内容（MIDI2Kit）
+
+#### 1. CIMessageBuilder+Reply.swift
+
+**変更前（0x3F 使用）:**
+```swift
+public static func peNotify(
+    ciVersion: UInt8 = 0x01,
+    sourceMUID: MUID,
+    destinationMUID: MUID,
+    requestID: UInt8,
+    subscribeId: String,
+    header: Data,
+    data: Data
+) -> Data {
+    var msg = Data()
+    msg.append(0xF0)
+    msg.append(0x7E)
+    msg.append(0x7F)
+    msg.append(0x0D)
+    msg.append(0x3F)  // PE Notify (CI v1.2)
+    ...
+```
+
+**変更後（0x38 + command:notify）:**
+```swift
+public static func peNotify(
+    ciVersion: UInt8 = 0x01,
+    sourceMUID: MUID,
+    destinationMUID: MUID,
+    requestID: UInt8,
+    subscribeId: String,
+    header: Data,
+    data: Data
+) -> Data {
+    var msg = Data()
+    msg.append(0xF0)
+    msg.append(0x7E)
+    msg.append(0x7F)
+    msg.append(0x0D)
+    msg.append(0x38)  // Subscribe (CI v1.1 compatible)
+    ...
+    // ヘッダーに command:notify を追加
+    let notifyHeader = "{\"command\":\"notify\",\"subscribeId\":\"\(subscribeId)\"}"
+    let headerData = Data(notifyHeader.utf8)
+    ...
+```
+
+**詳細:**
+- sub-ID2 を 0x3F → 0x38 に変更
+- ヘッダーに `{"command":"notify","subscribeId":"sub-N"}` を含める
+- これにより KeyStage は「Subscribe メッセージの Notify コマンド」として認識
+
+#### 2. PEResponder.swift
+
+**excludeMUIDs 追加（macOS entity 除外）:**
+```swift
+actor PEResponder {
+    // ...
+    private var excludeMUIDs: Set<UInt32> = []  // macOS entities to exclude
+    
+    func notify(resource: String, data: Data) async {
+        guard let sub = subscriptions[resource] else { return }
+        let subscribers = sub.subscribers.filter { !excludeMUIDs.contains($0.key) }
+        for (muid, subscribeId) in subscribers {
+            // Send PE Notify (0x38)
+            ...
+        }
+    }
+    
+    private func subscriberMUIDs() -> [UInt32] {
+        var muids: [UInt32] = []
+        for (_, sub) in subscriptions {
+            muids.append(contentsOf: sub.subscribers.keys.filter { !excludeMUIDs.contains($0) })
+        }
+        return muids
+    }
+}
+```
+
+**目的:**
+- macOS 環境では、M2DX 自身が discoveredPEDevices に含まれることがある
+- excludeMUIDs で M2DX 自身の MUID を除外し、KeyStage にのみ Notify を送信
+- 自己ループによる無限 Notify 防止
+
+#### 3. MIDIInputManager.swift
+
+**macOS entity 除外ロジック:**
+```swift
+// PE Responder discovery callback
+await peResponder.onDiscovery { [weak self] muid, isKnown in
+    guard let self = self else { return }
+    if !isKnown {
+        // New PE device discovered
+        await MainActor.run {
+            self.discoveredPEDevices.insert(muid)
+        }
+        #if os(macOS)
+        // Exclude macOS entities (self) from PE Notify
+        if let sharedMUID = await self.peResponder?.sharedMUID?.rawValue,
+           muid == sharedMUID {
+            await self.peResponder?.excludeMUIDs.insert(muid)
+        }
+        #endif
+    }
+}
+```
+
+**0x39 (Subscribe Reply) フィルタ:**
+```swift
+// PEResponder handleMessage() 内
+if parsed.subID2 == 0x39 {
+    // KeyStage sends Subscribe Reply (0x39) after successful subscription
+    // Ignore it (not a Notify)
+    print("PE: ignoring Subscribe Reply (0x39) from \(String(format:"0x%X", parsed.sourceMUID.rawValue))")
+    return
+}
+```
+
+**目的:**
+- KeyStage は Subscribe 成功時に 0x39 (Subscribe Reply) を送信
+- M2DX はこれを「Notify」と誤認識しないようフィルタ
+
+### テスト結果（2026-02-08 08:27 実機確認）
+
+**環境:**
+- macOS 15.3 (Sequoia)
+- M2DXMac PID 25740
+- KORG KeyStage (MUID 0x602AA21)
+
+**テスト内容:**
+- 20回以上の連続 Program Change（0-9 繰り返し）
+- E.PIANO 1, CLAV 1, BASS 1, E.ORGAN 1, MARIMBA, FLUTE 1 等
+
+**結果:**
+- ✅ **全てハングなし** — 連続 PC 動作が完全に安定
+- ✅ **LCD 更新成功** — X-ProgramEdit Notify (0x38 + command:notify) でプログラム名が即座に反映
+- ✅ **KeyStage 0x39 (Subscribe Reply) 正しくフィルタ**: "PE: ignoring Subscribe Reply (0x39)"
+- ✅ **macOS entity 除外成功**: discoveredPEDevices のみに Notify 送信
+
+### 教訓
+
+#### 1. MIDI-CI バージョン互換性の重要性
+
+- CI v1.1 と CI v1.2 では Notify メッセージフォーマットが異なる
+- **デバイスの CI バージョンを確認し、対応する方式を使用すべき**
+- KORG KeyStage は CI v1.1 準拠 → 0x38 + command:notify 必須
+
+#### 2. 仕様書の「オプション」は実装により異なる
+
+- MIDI-CI 仕様では 0x3F は「オプション」として記載
+- しかし KORG は 0x38 + command:notify を「必須」として実装
+- **仕様のオプション機能でも、実デバイスでは必須の場合がある**
+
+#### 3. macOS 環境特有の問題
+
+- macOS では CoreMIDI が自身のエンティティを discoveredPEDevices に含めることがある
+- **excludeMUIDs で自己ループを防ぐ必要**
+- iOS 環境では不要（自己検出しない）
+
+#### 4. Subscribe Reply (0x39) の扱い
+
+- KeyStage は Subscribe 成功時に 0x39 を送信
+- **0x39 は Notify ではなく Ack（確認応答）** として扱う
+- PEResponder は 0x39 を無視し、0x38 + command:notify のみ処理
+
+### 今後の対応
+
+#### リリース前
+
+- [x] 0x3F → 0x38 修正の動作確認（完了 2026-02-08）
+- [x] macOS entity 除外の動作確認（完了 2026-02-08）
+- [x] 0x39 フィルタの動作確認（完了 2026-02-08）
+- [ ] iOS 実機での動作確認（excludeMUIDs がiOSで不要であることを確認）
+- [ ] デバッグ print 文のクリーンアップ
+
+#### 将来の拡張
+
+- [ ] CI v1.2 デバイスとの互換性確認（0x3F 対応デバイスのテスト）
+- [ ] BLE MIDI 接続での PE Notify 動作確認
+
+---
+
+## 16. 解決済み問題の時系列（更新 2026-02-08）
+
+### Phase 8: ★★★ PE Notify sub-ID2 修正（0x3F → 0x38）— 最終解決 (2026-02-08)
+
+- **問題**: PE Notify 送信後に KeyStage LCD にプログラム名が表示されず、部分的にハング
+- **根本原因**: KORG KeyStage は CI v1.1 準拠で 0x3F (PE Notify) 未対応
+  - 0x38 (Subscription) + command:notify ヘッダーが正しい Notify 方式
+  - 0x3F 送信 → KeyStage が未知メッセージとして部分ハング（PC 不可、NoteOn 可）
+- **修正内容**:
+  1. CIMessageBuilder+Reply.swift: PE Notify sub-ID2 を 0x3F → 0x38 に変更（CI v1.1 準拠）
+  2. PEResponder.swift: command:"notify" 無視 / excludeMUIDs / subscriberMUIDs()
+  3. MIDIInputManager.swift: macOS entity 除外ロジック / 0x39 フィルタ
+- **結果**: 連続 20+ 回の Program Change でハングなし、LCD 更新成功
+
+---
+
+## 17. 現状（2026-02-08 08:33 時点）
+
+### 動作確認済み
+
+- [x] PE SysExフィールドオーダー修正
+- [x] ProgramList JSONフォーマット修正（title + bankPC配列）
+- [x] ChannelList Subscribe成功（1-based channel）
+- [x] ProgramList GET Reply成功（totalCount付きヘッダー）
+- [x] 全リソース totalCount ヘッダー追加
+- [x] X-ParameterList 5パラメータ応答成功（min/max削除、KORG公式仕様準拠）
+- [x] X-ProgramEdit currentValues形式で応答成功（ハング解決）
+- [x] 全 Subscribe 成功（sub-1 ~ sub-4）
+- [x] ★★★ **PE Notify 0x38修正で動作確認（KeyStage LCD プログラム名表示成功）**
+- [x] ★★★ **macOS entity 除外ロジック実装（自己ループ防止）**
+- [x] ★★★ **KeyStage 0x39 (Subscribe Reply) フィルタ実装**
+- [x] 固定 MUID でキャッシュ問題解消
+- [x] Manual Cap Reply 廃止
+- [x] stop() で Invalidate MUID 送信
+- [x] macOS版 log stream によるリアルタイムデバッグ環境確立
+- [x] 連続 20+ 回 Program Change でハングなし（完全安定動作確認）
+
+### 確認待ち / 調査中
+
+- [ ] JSONSchema resId パース問題（parameterListSchema/programEditSchema が {} を返す）
+- [ ] iOS 実機での PE Notify 動作確認（excludeMUIDs がiOSで不要であることを確認）
+- [ ] デバッグ print 文のクリーンアップ
+- [ ] BLE MIDI 接続での PE Notify 動作確認
+
+---

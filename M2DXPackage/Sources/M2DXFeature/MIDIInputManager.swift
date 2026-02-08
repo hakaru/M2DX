@@ -1,6 +1,7 @@
 // MIDIInputManager.swift
 // External MIDI device input via MIDI2Kit with MIDI 2.0 UMP support
 
+import CoreMIDI
 import Foundation
 import M2DXCore
 import MIDI2Core
@@ -245,18 +246,12 @@ public final class MIDIInputManager {
             let logger = CompositeMIDI2Logger(loggers: [osLogger, bufferLogger])
             self.compositeLogger = logger
 
-            // DEBUG: Step-by-step PE/CI isolation to find KeyStage LCD hang cause
-            // Step 0: PE completely disabled (MIDI only) — CONFIRMED: no hang
-            // Step 1: CIManager only (no Discovery Inquiry, no PEResponder/PEManager)
-            // Step 2: CIManager + Discovery Inquiry (no PEResponder/PEManager)
-            // Step 3: Full PE/CI (original code)
-            let peIsolationStep = 3  // Full PE/CI with Subscribe disabled in ResourceList
             #if DEBUG
             let snifferActive = peSnifferMode
             #else
             let snifferActive = false
             #endif
-            if peIsolationStep == 0 || snifferActive {
+            if snifferActive {
                 appendDebugLog("SNIFF: Sniffer mode ON — PE Responder disabled")
             } else {
                 let sharedMUID = MUID(rawValue: 0x5404629)!
@@ -268,6 +263,12 @@ public final class MIDIInputManager {
                     modelID: 0x0001,
                     versionID: 0x00010000
                 )
+                // Pre-resolve PE reply destination BEFORE Discovery to avoid broadcasting
+                // to all USB ports which causes KeyStage LCD hang.
+                // KORG USB: "CTRL" port only. Bluetooth: "Module" port.
+                let (peReplyDests, destNames) = Self.resolvePEDestinations()
+                appendDebugLog("PE: MIDI dests=[\(destNames.joined(separator: ", "))]")
+
                 let ci = CIManager(
                     transport: midi,
                     muid: sharedMUID,
@@ -275,42 +276,55 @@ public final class MIDIInputManager {
                         autoStartDiscovery: false,
                         respondToDiscovery: true,
                         registerFromInquiry: true,
-                        categorySupport: peIsolationStep >= 3 ? .propertyExchange : [],  // Step<3: no PE advertised
+                        categorySupport: .propertyExchange,
                         deviceIdentity: korgIdentity
                     ),
                     logger: logger
                 )
-                self.ciManager = ci
-                appendDebugLog("PE: CIManager.muid=\(ci.muid) [step=\(peIsolationStep)]")
-
-                if peIsolationStep >= 2 && peIsolationStep < 25 {
-                    // Step 2+: Add PEResponder + PEManager
-                    let responder = PEResponder(muid: sharedMUID, transport: midi, logger: logger)
-                    self.peResponder = responder
-                    Task { [weak self] in
-                        await responder.setLogCallback { resource, body, replySize in
-                            Task { @MainActor in
-                                self?.appendDebugLog("PE-Resp: \(resource) body=\(body.prefix(150)) reply=\(replySize)B")
-                            }
-                        }
+                // Set targeted destinations for CI Discovery Reply
+                Task {
+                    if !peReplyDests.isEmpty {
+                        await ci.setReplyDestinations(peReplyDests)
                     }
-                    Task { await self.registerPEResources(responder) }
+                }
+                self.ciManager = ci
+                appendDebugLog("PE: CIManager.muid=\(ci.muid)")
 
-                    let pe = PEManager(transport: midi, sourceMUID: sharedMUID, sendStrategy: .single, logger: logger)
-                    self.peManager = pe
-                    Task { await pe.resetForExternalDispatch() }
+                // PEResponder + PEManager
+                let responder = PEResponder(
+                    muid: sharedMUID,
+                    transport: midi,
+                    logger: logger,
+                    replyDestinations: peReplyDests.isEmpty ? nil : peReplyDests
+                )
+                self.peResponder = responder
+                if peReplyDests.isEmpty {
+                    appendDebugLog("PE-Resp: broadcast mode (no PE dest found)")
+                } else {
+                    appendDebugLog("PE-Resp: targeted \(peReplyDests.count) dest(s) id=\(peReplyDests.map { String($0.value) }.joined(separator: ","))")
                 }
 
-                if peIsolationStep == 25 || peIsolationStep >= 3 {
-                    // Step 2.5/3: Send Discovery Inquiry
-                    // Minimal delay — must beat KeyStage's own Discovery to be Initiator
-                    // When M2DX discovers first, KeyStage properly GETs our resources + subscribes
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(100))
-                        await ci.sendDiscoveryInquiry()
-                        await MainActor.run {
-                            self.appendDebugLog("PE: Sent Discovery Inquiry [step=\(peIsolationStep)]")
+                Task { [weak self] in
+                    await responder.setLogCallback { resource, body, replySize in
+                        Task { @MainActor in
+                            self?.appendDebugLog("PE-Resp: \(resource) body=\(body.prefix(150)) reply=\(replySize)B")
                         }
+                    }
+                }
+                Task { await self.registerPEResources(responder) }
+
+                let pe = PEManager(transport: midi, sourceMUID: sharedMUID, sendStrategy: .single, logger: logger)
+                self.peManager = pe
+                Task { await pe.resetForExternalDispatch() }
+
+                // Send Discovery Inquiry
+                // Minimal delay — must beat KeyStage's own Discovery to be Initiator
+                // When M2DX discovers first, KeyStage properly GETs our resources + subscribes
+                Task {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    await ci.sendDiscoveryInquiry()
+                    await MainActor.run {
+                        self.appendDebugLog("PE: Sent Discovery Inquiry")
                     }
                 }
             }
@@ -345,7 +359,7 @@ public final class MIDIInputManager {
                 // Log available destinations for debugging
                 let allDests = await transportRef.destinations
                 await MainActor.run {
-                    self?.appendDebugLog("PE-Resp: \(allDests.count) dests (broadcast mode)")
+                    self?.appendDebugLog("MIDI: \(allDests.count) destinations available")
                 }
 
                 // Listen for MIDI data
@@ -526,10 +540,12 @@ public final class MIDIInputManager {
                                     if !self.discoveredPEDevices.contains(where: { $0.muid == device.muid }) {
                                         self.discoveredPEDevices.append(device)
                                     }
+                                    self.updatePEReplyDestinations()
                                 }
                             case .deviceLost(let muid):
                                 self.appendDebugLog("CI: Lost \(muid)")
                                 self.discoveredPEDevices.removeAll { $0.muid == muid }
+                                self.updatePEReplyDestinations()
                             case .deviceUpdated(let device):
                                 self.appendDebugLog("CI: Updated \(device.displayName)")
                             default:
@@ -621,18 +637,13 @@ public final class MIDIInputManager {
     /// Current program index (for ChannelList programTitle in PE GET)
     private var currentProgramIndex: Int = 0
 
-    /// Register PE resources (standard + KORG custom)
+    /// Register PE resources (standard + KORG custom) on the PEResponder.
     private func registerPEResources(_ responder: PEResponder) async {
-        // ResourceList — 5 resources (X-ProgramEdit restored for LCD program name display)
-        // KeyStage LCD uses X-ProgramEdit.name for program name display, not ChannelList.programTitle.
-        // Previous hangs with 5 resources were caused by combination of MUID rewrite + fast Notify timing.
-        // Now: MUID DROP + 500ms delay should prevent hangs.
+        // ResourceList — advertise all 5 resources with Subscribe support
+        let resourceListJSON = "[{\"resource\":\"DeviceInfo\"},{\"resource\":\"ChannelList\",\"canSubscribe\":true},{\"resource\":\"ProgramList\",\"canSubscribe\":true},{\"resource\":\"X-ParameterList\",\"canSubscribe\":true},{\"resource\":\"X-ProgramEdit\",\"canSubscribe\":true}]"
+
         await responder.registerResource("ResourceList", resource: ComputedResource(
-            get: { _ in
-                Data("""
-                [{"resource":"DeviceInfo"},{"resource":"ChannelList","canSubscribe":true},{"resource":"ProgramList","canSubscribe":true},{"resource":"X-ParameterList","canSubscribe":true},{"resource":"X-ProgramEdit","canSubscribe":true}]
-                """.utf8)
-            },
+            get: { _ in Data(resourceListJSON.utf8) },
             responseHeader: { _, _ in
                 Data("{\"status\":200,\"totalCount\":5}".utf8)
             }
@@ -645,7 +656,7 @@ public final class MIDIInputManager {
         {"manufacturerName":"KORG","productName":"M2DX DX7 Synthesizer","softwareVersion":"1.0","familyName":"FM Synthesizer","modelName":"DX7 Compatible"}
         """))
 
-        // ChannelList — single channel
+        // ChannelList — single channel with Subscribe support
         await responder.registerResource("ChannelList", resource: ComputedResource(
             supportsSubscription: true,
             get: { [weak self] _ in
@@ -742,6 +753,86 @@ public final class MIDIInputManager {
             return presets[currentProgramIndex].name
         }
         return "INIT VOICE"
+    }
+
+    // MARK: - PE Reply Destination Management
+
+    /// Synchronously resolve the PE reply destination from CoreMIDI endpoints.
+    /// Must run BEFORE CIManager.start() to avoid broadcasting PE replies to all ports.
+    /// KORG USB: "CTRL" port. KORG Bluetooth: "Module" port.
+    private static func resolvePEDestinations() -> (destinations: [MIDIDestinationID], names: [String]) {
+        let count = MIDIGetNumberOfDestinations()
+        guard count > 0 else { return ([], []) }
+
+        struct DestInfo { let id: MIDIDestinationID; let name: String }
+        var dests: [DestInfo] = []
+        for i in 0..<count {
+            let ref = MIDIGetDestination(i)
+            guard ref != 0 else { continue }
+            var cfName: Unmanaged<CFString>?
+            MIDIObjectGetStringProperty(ref, kMIDIPropertyName, &cfName)
+            let name = (cfName?.takeRetainedValue() as String?) ?? ""
+            dests.append(DestInfo(id: MIDIDestinationID(UInt32(ref)), name: name))
+        }
+
+        let allNames = dests.map(\.name)
+
+        // Bluetooth KORG: "Module" port only
+        if let d = dests.first(where: { $0.name.lowercased().contains("module") }) {
+            return ([d.id], allNames)
+        }
+
+        // USB KORG: CTRL port only for PE/CI.
+        // Session 1 and DAW OUT cause KeyStage LCD hang when receiving CI messages.
+        if let d = dests.first(where: { $0.name.lowercased().contains("ctrl") }) {
+            return ([d.id], allNames)
+        }
+        // Fallback: "DAW" port
+        if let d = dests.first(where: { $0.name.lowercased().contains("daw") }) {
+            return ([d.id], allNames)
+        }
+
+        // Fallback: "Keystage" or "keystage" — pick the first one
+        if let d = dests.first(where: { $0.name.lowercased().contains("keystage") }) {
+            return ([d.id], allNames)
+        }
+        // Fallback: first non-KBD, non-Session destination
+        let nonKbd = dests.filter {
+            let n = $0.name.lowercased()
+            return !n.contains("kbd") && !n.contains("session")
+        }
+        if let d = nonKbd.first {
+            return ([d.id], allNames)
+        }
+        // Last resort: first destination
+        if let d = dests.first {
+            return ([d.id], allNames)
+        }
+        return ([], allNames)
+    }
+
+    /// Update PEResponder's replyDestinations from discoveredPEDevices.
+    /// Targeted send uses legacy MIDISend (not UMP SysEx7) to avoid KeyStage hangs.
+    /// This prevents broadcasting PE replies to all 3 destinations (KBD/CTRL/Module).
+    private func updatePEReplyDestinations() {
+        guard let responder = peResponder, let ci = ciManager else { return }
+        let devices = discoveredPEDevices
+        Task {
+            var destinations: [MIDIDestinationID] = []
+            for device in devices {
+                if let dest = await ci.destination(for: device.muid) {
+                    destinations.append(dest)
+                }
+            }
+            await responder.setReplyDestinations(destinations)
+            await MainActor.run {
+                if destinations.isEmpty {
+                    self.appendDebugLog("PE: replyDestinations cleared")
+                } else {
+                    self.appendDebugLog("PE: replyDestinations=\(destinations.map { String($0.value) }.joined(separator: ","))")
+                }
+            }
+        }
     }
 
     // MARK: - PE Notify (subscription updates on Program Change)
