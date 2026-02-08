@@ -1996,3 +1996,37 @@
 決定事項: 午後の成果（09:01〜15:49）を全てドキュメントに反映完了
 次のTODO: iOS実機ビルド → コミット準備
 ---
+
+---
+2026-02-08 16:00
+作業項目: KeyStageプログラムリスト取得の発火タイミング調査
+追加機能の説明:
+- ProgramList GETは完全にユーザー駆動型（Settings UIの「Query」ボタンのみ）
+- 自動取得は一切行われない
+- 接続/再接続時: Discovery Inquiry送信→デバイス発見→discoveredPEDevices追加まで自動
+- ProgramList GETはその後の手動Queryが必要
+- 再接続フロー: selectSource()→stop()→start()→Discovery送信（自動）→Query（手動）
+決定事項: ProgramList取得は手動Queryのみ。再接続しても自動取得されない
+次のTODO: 自動取得が必要なら、デバイス発見時にqueryRemoteProgramListを自動呼び出しする実装が必要
+---
+
+---
+2026-02-08 16:06
+作業項目: デバイス発見時にProgramList自動取得を実装
+追加機能の説明:
+- ciEventTask内のdeviceDiscoveredイベント（MIDIInputManager.swift:570付近）で
+  PEデバイス発見後にqueryRemoteProgramList(device:)を自動呼び出し
+- Discovery後に少し遅延を入れてからQuery実行（PEの準備を待つ）
+決定事項: deviceDiscoveredイベントハンドラ内で自動ProgramList取得を追加
+次のTODO: 実装 → ビルド確認
+---
+
+---
+2026-02-08 16:10
+作業項目: ProgramList自動取得 — 実機動作確認OK
+追加機能の説明:
+- Reconnect MIDI → Discovery → 自動ProgramList GETの一連のフローが正常動作
+- 手動Queryボタンも引き続き利用可能
+決定事項: 実装完了・動作確認済み
+次のTODO: コミット
+---

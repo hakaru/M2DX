@@ -570,10 +570,18 @@ public final class MIDIInputManager {
                             case .deviceDiscovered(let device):
                                 self.appendDebugLog("CI: Discovered \(device.displayName)")
                                 if device.supportsPropertyExchange {
-                                    if !self.discoveredPEDevices.contains(where: { $0.muid == device.muid }) {
+                                    let isNew = !self.discoveredPEDevices.contains(where: { $0.muid == device.muid })
+                                    if isNew {
                                         self.discoveredPEDevices.append(device)
                                     }
                                     self.updatePEReplyDestinations()
+                                    // Auto-query ProgramList on new PE device discovery
+                                    if isNew {
+                                        Task { [weak self] in
+                                            try? await Task.sleep(for: .milliseconds(500))
+                                            await self?.queryRemoteProgramList(device: device)
+                                        }
+                                    }
                                 }
                             case .deviceLost(let muid):
                                 self.appendDebugLog("CI: Lost \(muid)")
